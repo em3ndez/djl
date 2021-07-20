@@ -22,7 +22,7 @@ The following pseudocode demonstrates how to load model from S3:
                 .optProgress(new ProgressBar())
                 .build();
 
-    ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria);
+    ZooModel<Image, Classifications> model = criteria.loadModel();
 ```
 
 See [How to load a model](../../docs/load_model.md) for more detail.
@@ -58,6 +58,6 @@ You can pull the module from the central Maven repository by including the follo
 <dependency>
     <groupId>ai.djl.aws</groupId>
     <artifactId>aws-ai</artifactId>
-    <version>0.10.0</version>
+    <version>0.12.0</version>
 </dependency>
 ```

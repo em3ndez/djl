@@ -115,7 +115,7 @@ public abstract class AbstractBlock implements Block {
             boolean training,
             PairList<String, Object> params) {
         NDManager paramsManager = parameterStore.getManager();
-        if (!isInitialized()) {
+        if (training && !isInitialized()) {
             initialize(paramsManager, DataType.FLOAT32, inputs.getShapes());
         }
         return forwardInternal(parameterStore, inputs, training, params);
@@ -182,7 +182,7 @@ public abstract class AbstractBlock implements Block {
      */
     protected final <B extends Block> B addChildBlock(String name, B block) {
         int childNumber = children.size() + 1;
-        children.add(String.format(Locale.ENGLISH, "%02d%s", childNumber, name), block);
+        children.add(String.format(Locale.ROOT, "%02d%s", childNumber, name), block);
         return block;
     }
 
@@ -330,6 +330,9 @@ public abstract class AbstractBlock implements Block {
     /** {@inheritDoc} */
     @Override
     public boolean isInitialized() {
+        if (inputShapes == null) {
+            return false;
+        }
         for (Parameter param : getParameters().values()) {
             if (!param.isInitialized()) {
                 return false;

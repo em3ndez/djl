@@ -16,6 +16,7 @@ import ai.djl.Device;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.util.PairList;
+import ai.djl.util.RandomUtils;
 import java.nio.Buffer;
 import java.nio.file.Path;
 import java.util.UUID;
@@ -155,6 +156,24 @@ public abstract class BaseNDManager implements NDManager {
 
     /** {@inheritDoc} */
     @Override
+    public NDArray truncatedNormal(float loc, float scale, Shape shape, DataType dataType) {
+        int sampleSize = (int) shape.size();
+        double[] dist = new double[sampleSize];
+
+        for (int i = 0; i < sampleSize; i++) {
+            double sample = RandomUtils.nextGaussian();
+            while (sample < -2 || sample > 2) {
+                sample = RandomUtils.nextGaussian();
+            }
+
+            dist[i] = sample;
+        }
+
+        return create(dist).muli(scale).addi(loc).reshape(shape).toType(dataType, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public NDArray randomMultinomial(int n, NDArray pValues) {
         throw new UnsupportedOperationException("Not supported!");
     }
@@ -278,13 +297,7 @@ public abstract class BaseNDManager implements NDManager {
                 }
             }
             for (TempResource resource : tempResources.values()) {
-                try {
-                    if (!resource.detached) {
-                        resource.resource.attach(resource.manager);
-                    }
-                } catch (Exception e) {
-                    logger.error("Temporary resource return failed.", e);
-                }
+                resource.returnResource();
             }
             parent.detachInternal(uid);
             resources.clear();
@@ -307,7 +320,7 @@ public abstract class BaseNDManager implements NDManager {
                 .append(") resource count: ")
                 .append(resources.size());
 
-        System.out.println(sb.toString()); // NOPMD
+        System.out.println(sb); // NOPMD
         for (AutoCloseable c : resources.values()) {
             if (c instanceof BaseNDManager) {
                 ((BaseNDManager) c).debugDump(level + 1);
@@ -316,6 +329,7 @@ public abstract class BaseNDManager implements NDManager {
     }
 
     protected static final class TempResource {
+
         private NDResource resource;
         private NDManager manager;
         private boolean detached;
@@ -324,6 +338,20 @@ public abstract class BaseNDManager implements NDManager {
             this.resource = resource;
             this.manager = manager;
             this.detached = false;
+        }
+
+        public void returnResource() {
+            try {
+                if (!detached) {
+                    if (manager.isOpen()) {
+                        resource.attach(manager);
+                    } else {
+                        resource.close();
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Temporary resource return failed.", e);
+            }
         }
     }
 }

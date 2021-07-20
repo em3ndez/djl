@@ -22,6 +22,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
@@ -49,7 +50,7 @@ public final class LibUtils {
 
     private static final Logger logger = LoggerFactory.getLogger(LibUtils.class);
 
-    private static final String NATIVE_LIB_NAME = "paddle_fluid";
+    private static final String NATIVE_LIB_NAME = "paddle_inference";
     private static final String LIB_NAME = "djl_paddle";
     private static final Pattern VERSION_PATTERN =
             Pattern.compile("(\\d+\\.\\d+\\.\\d+)(-SNAPSHOT)?(-\\d+)?");
@@ -66,8 +67,7 @@ public final class LibUtils {
             }
         }
         if (System.getProperty("os.name").startsWith("Linux")) {
-            // TODO: put MKL fix once 2.0.1 comes
-            // loadLinuxDependencies(libName);
+            loadLinuxDependencies(libName);
         } else if (System.getProperty("os.name").startsWith("Win")) {
             loadWindowsDependencies(libName);
         }
@@ -81,30 +81,30 @@ public final class LibUtils {
         libName = copyJniLibraryFromClasspath(nativeLibDir, fallback.get());
         logger.debug("Loading paddle library from: {}", libName);
         System.load(libName); // NOPMD
-
-        // post configure extralib path
-        //        if (System.getProperty("os.name").startsWith("Linux")) {
-        //            Path libDir = Paths.get(libName).getParent();
-        //            if (libDir == null) {
-        //                throw new IllegalStateException("Native folder cannot be found");
-        //            }
-        //            String[] args = {
-        //                "dummy", "--mklml_dir=\"" + libDir.toAbsolutePath().toString() + "/\""
-        //            };
-        //            PaddleLibrary.LIB.loadExtraDir(args);
-        //        }
     }
 
-    //    public static void loadLinuxDependencies(String libName) {
-    //        Path libDir = Paths.get(libName).getParent();
-    //        List<String> names = Arrays.asList("libiomp5.so", "libdnnl.so.1");
-    //        names.forEach(
-    //                name -> {
-    //                    String lib = libDir.resolve(name).toAbsolutePath().toString();
-    //                    logger.debug("Now loading " + lib);
-    //                    System.load(lib);
-    //                });
-    //    }
+    public static void loadLinuxDependencies(String libName) {
+        Path libDir = Paths.get(libName).getParent();
+        if (libDir != null) {
+            logger.info(
+                    "Paddle MKL/GPU requires user to set LD_LIBRARY_PATH="
+                            + libDir
+                            + ", the current one is set to: "
+                            + System.getenv("LD_LIBRARY_PATH"));
+            List<String> names = Arrays.asList("libdnnl.so.2", "libiomp5.so", "libmklml_intel.so");
+            names.forEach(
+                    name -> {
+                        Path path = libDir.resolve(name);
+                        if (Files.isRegularFile(path)) {
+                            String lib = path.toAbsolutePath().toString();
+                            logger.debug("Now loading " + lib);
+                            System.load(lib);
+                        } else {
+                            logger.debug(name + " is not found, skip loading...");
+                        }
+                    });
+        }
+    }
 
     public static void loadWindowsDependencies(String libName) {
         Path libDir = Paths.get(libName).getParent();
@@ -155,9 +155,12 @@ public final class LibUtils {
         }
 
         Path tmp = null;
-        try (InputStream stream =
-                LibUtils.class.getResourceAsStream(
-                        "/jnilib/" + classifier + '/' + flavor + '/' + name)) {
+        String libPath = "/jnilib/" + classifier + '/' + flavor + '/' + name;
+        try (InputStream stream = LibUtils.class.getResourceAsStream(libPath)) {
+            logger.info("Extracting {} to cache ...", libPath);
+            if (stream == null) {
+                throw new IllegalStateException("Paddle jni not found: " + libPath);
+            }
             tmp = Files.createTempFile(nativeDir, "jni", "tmp");
             Files.copy(stream, tmp, StandardCopyOption.REPLACE_EXISTING);
             Utils.moveQuietly(tmp, path);
@@ -205,6 +208,11 @@ public final class LibUtils {
             }
 
             if (matching != null) {
+                // in case using native-cpu package on GPU machine, force set fallback to true
+                String flavor = matching.getFlavor();
+                if (flavor.isEmpty() || "cpu".equals(flavor)) {
+                    fallback.set(true);
+                }
                 return loadLibraryFromClasspath(matching);
             }
 
@@ -230,9 +238,14 @@ public final class LibUtils {
         try {
             String libName = System.mapLibraryName(NATIVE_LIB_NAME);
             Path cacheFolder = Utils.getEngineCacheDir("paddle");
-            logger.debug("Using cache dir: {}", cacheFolder);
-
-            Path dir = cacheFolder.resolve(platform.getVersion() + platform.getClassifier());
+            String version = platform.getVersion();
+            String flavor = platform.getFlavor();
+            if (flavor.isEmpty()) {
+                flavor = "cpu";
+            }
+            String classifier = platform.getClassifier();
+            Path dir = cacheFolder.resolve(version + '-' + flavor + '-' + classifier);
+            logger.debug("Using cache dir: {}", dir);
             Path path = dir.resolve(libName);
             if (Files.exists(path)) {
                 return path.toAbsolutePath().toString();
@@ -241,9 +254,18 @@ public final class LibUtils {
             tmp = Files.createTempDirectory(cacheFolder, "tmp");
             for (String file : platform.getLibraries()) {
                 String libPath = "/native/lib/" + file;
-                try (InputStream is = LibUtils.class.getResourceAsStream(libPath)) {
-                    logger.info("Extracting {} to cache ...", file);
-                    Files.copy(is, tmp.resolve(file), StandardCopyOption.REPLACE_EXISTING);
+                logger.info("Extracting {} to cache ...", file);
+                if (file.endsWith(".gz")) {
+                    // FIXME: temporary workaround for paddlepaddle-native-cu102:2.0.2
+                    String f = file.substring(0, file.length() - 3);
+                    try (InputStream is =
+                            new GZIPInputStream(LibUtils.class.getResourceAsStream(libPath))) {
+                        Files.copy(is, tmp.resolve(f), StandardCopyOption.REPLACE_EXISTING);
+                    }
+                } else {
+                    try (InputStream is = LibUtils.class.getResourceAsStream(libPath)) {
+                        Files.copy(is, tmp.resolve(file), StandardCopyOption.REPLACE_EXISTING);
+                    }
                 }
             }
 
@@ -291,8 +313,8 @@ public final class LibUtils {
 
         String libName = System.mapLibraryName(NATIVE_LIB_NAME);
         Path cacheDir = Utils.getEngineCacheDir("paddle");
-        logger.debug("Using cache dir: {}", cacheDir);
         Path dir = cacheDir.resolve(version + '-' + flavor + '-' + classifier);
+        logger.debug("Using cache dir: {}", dir);
         Path path = dir.resolve(libName);
         if (Files.exists(path)) {
             return path.toAbsolutePath().toString();
@@ -309,7 +331,7 @@ public final class LibUtils {
         try (InputStream is = new URL(link + "/files.txt").openStream()) {
             List<String> lines = Utils.readLines(is);
             if (flavor.startsWith("cu")
-                    && !lines.contains(flavor + '/' + os + "/native/lib/" + libName)) {
+                    && !lines.contains(flavor + '/' + os + "/native/lib/" + libName + ".gz")) {
                 logger.warn("No matching cuda flavor for {} found: {}.", os, flavor);
                 // fallback to CPU
                 flavor = "cpu";

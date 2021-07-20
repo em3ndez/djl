@@ -37,6 +37,15 @@ JNIEXPORT jlong JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_torchLogSoftmax(
   API_END_RETURN()
 }
 
+JNIEXPORT jlong JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_torchNNOneHot(
+    JNIEnv* env, jobject jthis, jlong jhandle, jint jdepth) {
+  API_BEGIN()
+  const auto* tensor_ptr = reinterpret_cast<torch::Tensor*>(jhandle);
+  const auto* result_ptr = new torch::Tensor(torch::nn::functional::one_hot(*tensor_ptr, jdepth));
+  return reinterpret_cast<uintptr_t>(result_ptr);
+  API_END_RETURN()
+}
+
 JNIEXPORT jlong JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_torchNNInterpolate(
     JNIEnv* env, jobject jthis, jlong jhandle, jlongArray jsize, jint jmode, jboolean jalign_corners) {
   API_BEGIN()
@@ -53,7 +62,7 @@ JNIEXPORT jlong JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_torchNNInterpolat
     result = torch::upsample_bicubic2d(*tensor_ptr, size_vec, jalign_corners);
   } else {
     env->ThrowNew(ENGINE_EXCEPTION_CLASS, "This kind of mode is not supported on Android");
-    return nullptr;
+    return reinterpret_cast<uintptr_t>(nullptr);
   }
   const auto* result_ptr = new torch::Tensor(result);
 #else
@@ -131,6 +140,25 @@ JNIEXPORT jlong JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_torchNNBatchNorm(
       *running_var_ptr,
       torch::nn::functional::BatchNormFuncOptions().weight(weight).bias(bias).momentum(jmomentum).eps(jeps).training(
           jtraining)));
+  return reinterpret_cast<uintptr_t>(result_ptr);
+  API_END_RETURN()
+}
+
+JNIEXPORT jlong JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_torchNNLayerNorm(
+    JNIEnv* env, jobject jthis, jlong jinput, jlongArray jnormalizedshape, jlong jweight, jlong jbias, jdouble jeps) {
+  API_BEGIN()
+  const auto* tensor_ptr = reinterpret_cast<torch::Tensor*>(jinput);
+  const auto normalized_shape_vec = djl::utils::jni::GetVecFromJLongArray(env, jnormalizedshape);
+  torch::Tensor weight = {};
+  torch::Tensor bias = {};
+  if (jweight != djl::utils::jni::NULL_PTR) {
+    weight = *reinterpret_cast<torch::Tensor*>(jweight);
+  }
+  if (jbias != djl::utils::jni::NULL_PTR) {
+    bias = *reinterpret_cast<torch::Tensor*>(jbias);
+  }
+  const auto* result_ptr = new torch::Tensor(torch::nn::functional::layer_norm(*tensor_ptr,
+      torch::nn::functional::LayerNormFuncOptions(normalized_shape_vec).weight(weight).bias(bias).eps(jeps)));
   return reinterpret_cast<uintptr_t>(result_ptr);
   API_END_RETURN()
 }

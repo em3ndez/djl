@@ -638,6 +638,13 @@ class MxNDArrayEx implements NDArrayEx {
 
     /** {@inheritDoc} */
     @Override
+    public NDList layerNorm(
+            NDArray input, Shape normalizedShape, NDArray gamma, NDArray beta, float eps) {
+        throw new UnsupportedOperationException();
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public NDList batchNorm(
             NDArray input,
             NDArray runningMean,
@@ -964,6 +971,7 @@ class MxNDArrayEx implements NDArrayEx {
 
     /** {@inheritDoc} */
     @Override
+    @SuppressWarnings("PMD.UseTryWithResources")
     public NDArray where(NDArray condition, NDArray other) {
         NDArray array1;
         NDArray array2;

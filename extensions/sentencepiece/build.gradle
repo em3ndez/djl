@@ -7,8 +7,8 @@ dependencies {
         exclude group: "junit", module: "junit"
     }
 
-    testImplementation project(":mxnet:mxnet-engine")
-    testImplementation "ai.djl.mxnet:mxnet-native-auto:${mxnet_version}"
+    testImplementation project(":pytorch:pytorch-engine")
+    testImplementation "ai.djl.pytorch:pytorch-native-auto:${pytorch_version}-SNAPSHOT"
     testImplementation "org.slf4j:slf4j-simple:${slf4j_version}"
 }
 
@@ -44,13 +44,6 @@ processResources {
         }
         def propFile = file("${classDir}/sentencepiece.properties")
         propFile.text = "version=${versionName}\n"
-
-        // for ci to upload to S3
-        def ciDir = "${project.projectDir}/jnilib/${djl_version}"
-        copy {
-            from jniDir
-            into ciDir
-        }
     }
 }
 
@@ -74,6 +67,13 @@ task compileJNI {
                 || System.properties['os.name'].toLowerCase(Locale.ROOT).contains("linux")) {
             exec {
                 commandLine 'bash', 'build.sh'
+            }
+            def jniDir = "${project.buildDir}/jnilib"
+            // for ci to upload to S3
+            def ciDir = "${project.projectDir}/jnilib/${djl_version}"
+            copy {
+                from jniDir
+                into ciDir
             }
         } else {
             throw new IllegalStateException("Unknown Architecture " + System.properties['os.name'])

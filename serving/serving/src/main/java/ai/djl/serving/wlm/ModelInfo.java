@@ -18,15 +18,17 @@ import ai.djl.repository.FilenameUtils;
 import ai.djl.repository.zoo.ZooModel;
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** A class represent a loaded model and it's metadata. */
-public final class ModelInfo implements AutoCloseable, Cloneable {
+public final class ModelInfo implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(ModelInfo.class);
 
     private String modelName;
+    private String version;
     private String modelUrl;
 
     private int minWorkers;
@@ -42,6 +44,7 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
      * Constructs a new {@code ModelInfo} instance.
      *
      * @param modelName the name of the model that will be used as HTTP endpoint
+     * @param version the version of the model
      * @param modelUrl the model url
      * @param model the {@link ZooModel}
      * @param queueSize the maximum request queue size
@@ -51,6 +54,7 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
      */
     public ModelInfo(
             String modelName,
+            String version,
             String modelUrl,
             ZooModel<Input, Output> model,
             int queueSize,
@@ -58,6 +62,7 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
             int maxBatchDelay,
             int batchSize) {
         this.modelName = modelName;
+        this.version = version;
         this.modelUrl = modelUrl;
         this.model = model;
         this.maxBatchDelay = maxBatchDelay;
@@ -71,18 +76,14 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
      * triggerUpdates in the {@code ModelManager} using this new model.
      *
      * @param batchSize the batchSize to set
+     * @param maxBatchDelay maximum time to wait for a free space in worker queue after scaling up
+     *     workers before giving up to offer the job to the queue.
      * @return new configured ModelInfo.
      */
-    public ModelInfo configureModelBatch(int batchSize) {
-        ModelInfo clone;
-        try {
-            clone = (ModelInfo) this.clone();
-            clone.batchSize = batchSize;
-        } catch (CloneNotSupportedException e) {
-            // this should never happen, cause we know we are cloneable.
-            throw new AssertionError(e);
-        }
-        return clone;
+    public ModelInfo configureModelBatch(int batchSize, int maxBatchDelay) {
+        this.batchSize = batchSize;
+        this.maxBatchDelay = maxBatchDelay;
+        return this;
     }
 
     /**
@@ -94,16 +95,9 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
      * @return new configured ModelInfo.
      */
     public ModelInfo scaleWorkers(int minWorkers, int maxWorkers) {
-        ModelInfo clone;
-        try {
-            clone = (ModelInfo) this.clone();
-            clone.minWorkers = minWorkers;
-            clone.maxWorkers = maxWorkers;
-        } catch (CloneNotSupportedException e) {
-            // this should never happen, cause we know we are cloneable.
-            throw new AssertionError(e);
-        }
-        return clone;
+        this.minWorkers = minWorkers;
+        this.maxWorkers = maxWorkers;
+        return this;
     }
 
     /**
@@ -112,21 +106,11 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
      * model.
      *
      * @param maxIdleTime time a WorkerThread can be idle before scaling down this worker.
-     * @param maxBatchDelay maximum time to wait for a free space in worker queue after scaling up
-     *     workers before giving up to offer the job to the queue.
      * @return new configured ModelInfo.
      */
-    public ModelInfo configurePool(int maxIdleTime, int maxBatchDelay) {
-        ModelInfo clone;
-        try {
-            clone = (ModelInfo) this.clone();
-            clone.maxIdleTime = maxIdleTime;
-            clone.maxBatchDelay = maxBatchDelay;
-        } catch (CloneNotSupportedException e) {
-            // ..ignore cause we know we are cloneable.
-            clone = this; // for the compiler
-        }
-        return clone;
+    public ModelInfo configurePool(int maxIdleTime) {
+        this.maxIdleTime = maxIdleTime;
+        return this;
     }
 
     /**
@@ -145,6 +129,15 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
      */
     public String getModelName() {
         return modelName;
+    }
+
+    /**
+     * Returns the model version.
+     *
+     * @return the model version
+     */
+    public String getVersion() {
+        return version;
     }
 
     /**
@@ -237,15 +230,49 @@ public final class ModelInfo implements AutoCloseable, Cloneable {
     public static String inferModelNameFromUrl(String url) {
         URI uri = URI.create(url);
         String path = uri.getPath();
-        String modelName;
+        boolean isDirectory = path.endsWith("/");
+        if (isDirectory) {
+            path = path.substring(0, path.length() - 1);
+        }
         int pos = path.lastIndexOf('/');
+        String modelName;
         if (pos >= 0) {
             modelName = path.substring(pos + 1);
         } else {
             modelName = path;
         }
-        modelName = FilenameUtils.getNamePart(modelName);
+        if (!isDirectory) {
+            modelName = FilenameUtils.getNamePart(modelName);
+        }
         modelName = modelName.replaceAll("(\\W|^_)", "_");
+        return modelName;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof ModelInfo)) {
+            return false;
+        }
+        ModelInfo modelInfo = (ModelInfo) o;
+        return modelName.equals(modelInfo.modelName) && Objects.equals(version, modelInfo.version);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public int hashCode() {
+        return Objects.hash(modelName, version);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public String toString() {
+        if (version != null) {
+            return modelName + ':' + version;
+        }
         return modelName;
     }
 }

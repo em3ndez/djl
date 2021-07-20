@@ -7,7 +7,7 @@ This module contains the Deep Java Library (DJL) EngineProvider for Apache MXNet
 We don't recommend that developers use classes in this module directly. Use of these classes
 will couple your code with Apache MXNet and make switching between engines difficult. Even so,
 developers are not restricted from using engine-specific features. For more information,
-see [NDManager#invoke()](https://javadoc.io/static/ai.djl/api/0.10.0/ai/djl/ndarray/NDManager.html#invoke-java.lang.String-ai.djl.ndarray.NDArray:A-ai.djl.ndarray.NDArray:A-ai.djl.util.PairList-).
+see [NDManager#invoke()](https://javadoc.io/static/ai.djl/api/0.12.0/ai/djl/ndarray/NDManager.html#invoke-java.lang.String-ai.djl.ndarray.NDArray:A-ai.djl.ndarray.NDArray:A-ai.djl.util.PairList-).
 
 ## Documentation
 
@@ -32,7 +32,7 @@ You can pull the MXNet engine from the central Maven repository by including the
 <dependency>
     <groupId>ai.djl.mxnet</groupId>
     <artifactId>mxnet-engine</artifactId>
-    <version>0.10.0</version>
+    <version>0.12.0</version>
     <scope>runtime</scope>
 </dependency>
 ```
@@ -77,6 +77,12 @@ For the Linux platform, you can choose between CPU, GPU. If you have Nvidia [CUD
 installed on your GPU machine, you can use one of the following library:
 
 #### Linux GPU
+
+**Important:** Since cuda 11.0, you must install CUDNN and NCCL matches the CUDA version manually.
+Apache MXNet no longer statically link CUDNN and NCCL in it.
+
+Apache MXNet 1.8.0 cu110 package supports SM 5.0, 6.0, 7.0 and 8.0 cuda architectures.
+Apache MXNet 1.8.0 cu102 package supports SM 3.0, 5.0, 6.0, 7.0 and 7.5 cuda architectures.
 
 - ai.djl.mxnet:mxnet-native-cu102mkl:1.8.0:linux-x86_64 - CUDA 11.0
 - ai.djl.mxnet:mxnet-native-cu101mkl:1.8.0:linux-x86_64 - CUDA 10.2

@@ -14,7 +14,6 @@ package ai.djl.serving.wlm;
 
 import ai.djl.modality.Input;
 import ai.djl.modality.Output;
-import ai.djl.serving.http.InternalServerException;
 import ai.djl.serving.util.NettyUtils;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
@@ -32,7 +31,7 @@ public class Job {
 
     private ChannelHandlerContext ctx;
 
-    private String modelName;
+    private ModelInfo modelInfo;
     private Input input;
     private long begin;
     private long scheduled;
@@ -41,12 +40,12 @@ public class Job {
      * Constructs an new {@code Job} instance.
      *
      * @param ctx the {@code ChannelHandlerContext}
-     * @param modelName the model name
+     * @param modelInfo the model to run the job
      * @param input the input data
      */
-    public Job(ChannelHandlerContext ctx, String modelName, Input input) {
+    public Job(ChannelHandlerContext ctx, ModelInfo modelInfo, Input input) {
         this.ctx = ctx;
-        this.modelName = modelName;
+        this.modelInfo = modelInfo;
         this.input = input;
 
         begin = System.currentTimeMillis();
@@ -63,12 +62,12 @@ public class Job {
     }
 
     /**
-     * Returns the model name that associated with this job.
+     * Returns the model that associated with this job.
      *
-     * @return the model name that associated with this job
+     * @return the model that associated with this job
      */
-    public String getModelName() {
-        return modelName;
+    public ModelInfo getModel() {
+        return modelInfo;
     }
 
     /**
@@ -118,9 +117,9 @@ public class Job {
      * Sends error to the client.
      *
      * @param status the HTTP status
-     * @param error the error message
+     * @param error the exception
      */
-    public void sendError(HttpResponseStatus status, String error) {
+    public void sendError(HttpResponseStatus status, Throwable error) {
         /*
          * We can load the models based on the configuration file.Since this Job is
          * not driven by the external connections, we could have a empty context for
@@ -128,7 +127,7 @@ public class Job {
          * by external clients.
          */
         if (ctx != null) {
-            NettyUtils.sendError(ctx, status, new InternalServerException(error));
+            NettyUtils.sendError(ctx, status, error);
         }
 
         logger.debug(

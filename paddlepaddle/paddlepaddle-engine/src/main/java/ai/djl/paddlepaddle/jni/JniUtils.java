@@ -68,8 +68,12 @@ public final class JniUtils {
     }
 
     public static long createConfig(String modelDir, String paramDir, Device device) {
-        int deviceId = device == Device.cpu() ? -1 : device.getDeviceId();
+        int deviceId = device.getDeviceId();
         return PaddleLibrary.LIB.createAnalysisConfig(modelDir, paramDir, deviceId);
+    }
+
+    public static void enableMKLDNN(long config) {
+        PaddleLibrary.LIB.analysisConfigEnableMKLDNN(config);
     }
 
     public static void useFeedFetchOp(long config) {
@@ -113,6 +117,6 @@ public final class JniUtils {
     }
 
     public static String getVersion() {
-        return "2.0.0";
+        return "2.0.2";
     }
 }

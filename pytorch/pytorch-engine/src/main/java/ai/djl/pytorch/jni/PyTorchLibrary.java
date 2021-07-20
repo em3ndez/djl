@@ -386,6 +386,13 @@ final class PyTorchLibrary {
 
     native long torchNNDropout(long inputHandle, double probability, boolean isTrain);
 
+    native long torchNNLayerNorm(
+            long inputHandle,
+            long[] normalizedShape,
+            long weigthHandle,
+            long biasHandle,
+            double eps);
+
     native long torchNNBatchNorm(
             long inputHandle,
             long runningMeanHandle,
@@ -448,6 +455,8 @@ final class PyTorchLibrary {
     native long torchNNLpPool(
             long inputHandle, double normType, long[] kernelSize, long[] stride, boolean ceilMode);
 
+    native long torchNNOneHot(long inputHandle, int depth);
+
     native boolean torchRequiresGrad(long inputHandle);
 
     native String torchGradFnName(long inputHandle);
@@ -471,6 +480,8 @@ final class PyTorchLibrary {
     native void moduleTrain(long handle);
 
     native long moduleForward(long moduleHandle, long[] iValueHandles, boolean isTrain);
+
+    native void setGraphExecutorOptimize(boolean enabled);
 
     native void moduleWrite(long moduleHandle, OutputStream os, byte[] buffer, boolean writeSize);
 

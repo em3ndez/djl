@@ -10,6 +10,7 @@
  * OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
+#include <torch/csrc/jit/python/update_graph_executor_opt.h>
 #include <torch/script.h>
 
 #include "ai_djl_pytorch_jni_PyTorchLibrary.h"
@@ -97,6 +98,10 @@ JNIEXPORT void JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_moduleWrite(
     JNIEnv* env, jobject jthis, jlong module_handle, jobject jos, jbyteArray arr, jboolean jwrite_size) {
   API_BEGIN()
   auto* module_ptr = reinterpret_cast<torch::jit::script::Module*>(module_handle);
+#if defined(__ANDROID__)
+  env->ThrowNew(ENGINE_EXCEPTION_CLASS, "This kind of mode is not supported on Android");
+  return;
+#endif
   std::ostringstream stream;
   module_ptr->save(stream);
   auto str = stream.str();
@@ -117,7 +122,7 @@ JNIEXPORT void JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_moduleWrite(
     for (int i = 0; i < 8; i++) {
       bytes[i] = static_cast<int>(length >> (56 - 8 * i) & 0XFF);
     }
-    env->SetByteArrayRegion(jbytes, 0, 8, (jbyte*)bytes);
+    env->SetByteArrayRegion(jbytes, 0, 8, (jbyte*) bytes);
     env->CallVoidMethod(jos, method_id, jbytes, 0, 8);
   }
   int len = env->GetArrayLength(arr);
@@ -133,6 +138,13 @@ JNIEXPORT void JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_moduleWrite(
     env->SetByteArrayRegion(arr, 0, last_len, (jbyte*) substr.c_str());
     env->CallVoidMethod(jos, method_id, arr, 0, last_len);
   }
+  API_END()
+}
+
+JNIEXPORT void JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_setGraphExecutorOptimize(
+    JNIEnv* env, jobject jthis, jboolean jenabled) {
+  API_BEGIN()
+  torch::jit::setGraphExecutorOptimize(jenabled);
   API_END()
 }
 
@@ -194,6 +206,10 @@ JNIEXPORT void JNICALL Java_ai_djl_pytorch_jni_PyTorchLibrary_moduleSave(
     JNIEnv* env, jobject jthis, jlong jhandle, jstring jpath) {
   API_BEGIN()
   auto* module_ptr = reinterpret_cast<torch::jit::script::Module*>(jhandle);
+#if defined(__ANDROID__)
+  env->ThrowNew(ENGINE_EXCEPTION_CLASS, "This kind of mode is not supported on Android");
+  return;
+#endif
   module_ptr->save(djl::utils::jni::GetStringFromJString(env, jpath));
   API_END()
 }

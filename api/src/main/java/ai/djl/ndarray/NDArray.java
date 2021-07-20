@@ -19,6 +19,7 @@ import ai.djl.ndarray.internal.NDFormat;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.ndarray.types.SparseFormat;
+import ai.djl.util.Float16Utils;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.DoubleBuffer;
@@ -242,7 +243,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
      */
     default float[] toFloatArray() {
-        if (getDataType() != DataType.FLOAT32) {
+        if (getDataType() == DataType.FLOAT16) {
+            return Float16Utils.fromByteBuffer(toByteBuffer());
+        } else if (getDataType() != DataType.FLOAT32) {
             throw new IllegalStateException(
                     "DataType mismatch, Required float, Actual " + getDataType());
         }
@@ -352,6 +355,7 @@ public interface NDArray extends NDResource {
      */
     default Number[] toArray() {
         switch (getDataType()) {
+            case FLOAT16:
             case FLOAT32:
                 float[] floatArray = toFloatArray();
                 return IntStream.range(0, floatArray.length)
@@ -1736,7 +1740,7 @@ public interface NDArray extends NDResource {
     NDArray minimum(Number n);
 
     /**
-     * Returns the maximum of this {@code NDArray} and the other {@code NDArray} element-wise.
+     * Returns the minimum of this {@code NDArray} and the other {@code NDArray} element-wise.
      *
      * <p>The shapes of this {@code NDArray} and the other {@code NDArray} must be broadcastable.
      *
@@ -1758,7 +1762,7 @@ public interface NDArray extends NDResource {
      * </pre>
      *
      * @param other the {@code NDArray} to be compared
-     * @return the maximum of this {@code NDArray} and the other {@code NDArray} element-wise
+     * @return the minimum of this {@code NDArray} and the other {@code NDArray} element-wise
      */
     NDArray minimum(NDArray other);
 
@@ -4586,6 +4590,57 @@ public interface NDArray extends NDResource {
      */
     default NDArray oneHot(int depth) {
         return oneHot(depth, 1f, 0f, DataType.FLOAT32);
+    }
+
+    /**
+     * Returns a one-hot {@code NDArray}.
+     *
+     * <ul>
+     *   <li>The locations represented by indices take value 1, while all other locations take value
+     *       0.
+     *   <li>If the input {@code NDArray} is rank N, the output will have rank N+1. The new axis is
+     *       appended at the end.
+     *   <li>If {@code NDArray} is a scalar the output shape will be a vector of length depth.
+     *   <li>If {@code NDArray} is a vector of length features, the output shape will be features x
+     *       depth.
+     *   <li>If {@code NDArray} is a matrix with shape [batch, features], the output shape will be
+     *       batch x features x depth.
+     * </ul>
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new int[] {1, 0, 2, 0});
+     * jshell&gt; array.oneHot(3);
+     * ND: (4, 3) cpu() float32
+     * [[0., 1., 0.],
+     *  [1., 0., 0.],
+     *  [0., 0., 1.],
+     *  [1., 0., 0.],
+     * ]
+     * jshell&gt; NDArray array = manager.create(new int[][] {{1, 0}, {1, 0}, {2, 0}});
+     * jshell&gt; array.oneHot(3);
+     * ND: (3, 2, 3) cpu() float32
+     * [[[0., 1., 0.],
+     *   [1., 0., 0.],
+     *  ],
+     *  [[0., 1., 0.],
+     *   [1., 0., 0.],
+     *  ],
+     *  [[0., 0., 1.],
+     *   [1., 0., 0.],
+     *  ],
+     * ]
+     * </pre>
+     *
+     * @param depth Depth of the one hot dimension.
+     * @param dataType dataType of the output.
+     * @return one-hot encoding of this {@code NDArray}
+     * @see <a
+     *     href=https://d2l.djl.ai/chapter_linear-networks/softmax-regression.html#classification-problems>Classification-problems</a>
+     */
+    default NDArray oneHot(int depth, DataType dataType) {
+        return oneHot(depth, 0f, 1f, dataType);
     }
 
     /**

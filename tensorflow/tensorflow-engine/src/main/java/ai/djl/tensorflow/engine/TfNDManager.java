@@ -20,6 +20,7 @@ import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.tensorflow.engine.javacpp.JavacppUtils;
+import ai.djl.util.Pair;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -27,21 +28,17 @@ import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
-import java.util.concurrent.atomic.AtomicReference;
 import org.tensorflow.internal.c_api.TFE_Context;
 import org.tensorflow.internal.c_api.TFE_TensorHandle;
+import org.tensorflow.internal.c_api.TF_Tensor;
 
+@SuppressWarnings("PMD.UseTryWithResources")
 public class TfNDManager extends BaseNDManager {
 
     static final TfNDManager SYSTEM_MANAGER = new SystemManager();
 
-    private AtomicReference<TFE_Context> eagerSessionHandle;
-
     private TfNDManager(NDManager parent, Device device) {
         super(parent, device);
-        eagerSessionHandle =
-                new AtomicReference<>(
-                        JavacppUtils.createEagerSession(true, 2, JavacppUtils.getSessionConfig()));
     }
 
     static TfNDManager getSystemManager() {
@@ -67,7 +64,6 @@ public class TfNDManager extends BaseNDManager {
     }
 
     /** {@inheritDoc} */
-    @SuppressWarnings({"unchecked", "try"})
     @Override
     public TfNDArray create(Buffer data, Shape shape, DataType dataType) {
         int size = data.remaining();
@@ -102,6 +98,13 @@ public class TfNDManager extends BaseNDManager {
         // TODO(improvement): avoid data copy by creating directByteBuffer on tensor data pointer
         TFE_TensorHandle handle = JavacppUtils.createTFETensorFromByteBuffer(buf, shape, dataType);
         return new TfNDArray(this, handle);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray create(String data) {
+        Pair<TF_Tensor, TFE_TensorHandle> pair = JavacppUtils.createStringTensor(data);
+        return new TfNDArray(this, pair.getValue(), pair.getKey());
     }
 
     /** {@inheritDoc} */
@@ -249,28 +252,43 @@ public class TfNDManager extends BaseNDManager {
 
     /** {@inheritDoc} */
     @Override
+    public NDArray truncatedNormal(float loc, float scale, Shape shape, DataType dataType) {
+        if (DataType.STRING.equals(dataType)) {
+            throw new IllegalArgumentException("String data type is not supported!");
+        }
+        NDArray axes = create(shape.getShape());
+        TfOpExecutor opBuilder =
+                opExecutor("TruncatedNormal").addInput(axes).addParam("dtype", dataType);
+        Integer seed = getEngine().getSeed();
+        if (seed != null) {
+            // seed1 is graph-level seed
+            // set it to default graph seed used by tensorflow
+            // https://github.com/tensorflow/tensorflow/blob/85c8b2a817f95a3e979ecd1ed95bff1dc1335cff/tensorflow/python/framework/random_seed.py#L31
+            opBuilder.addParam("seed", 87654321);
+            opBuilder.addParam("seed2", seed);
+        }
+        try (NDArray array = opBuilder.buildSingletonOrThrow();
+                NDArray temp = array.mul(scale)) {
+            return temp.add(loc);
+        } finally {
+            axes.close();
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public TfNDManager newSubManager(Device device) {
         TfNDManager manager = new TfNDManager(this, device);
         attachInternal(manager.uid, manager);
         return manager;
     }
 
-    /** {@inheritDoc} */
-    @Override
-    public void close() {
-        super.close();
-        TFE_Context eagerSession = eagerSessionHandle.getAndSet(null);
-        if (eagerSession != null && !eagerSession.isNull()) {
-            eagerSession.close();
-        }
+    public TFE_Context getEagerSession() {
+        return ((TfEngine) getEngine()).getEagerSession();
     }
 
     public TfOpExecutor opExecutor(String operation) {
-        return new TfOpExecutor(this, eagerSessionHandle.get(), operation);
-    }
-
-    TFE_Context getEagerSession() {
-        return eagerSessionHandle.get();
+        return new TfOpExecutor(this, getEagerSession(), operation);
     }
 
     private static final class SystemManager extends TfNDManager {

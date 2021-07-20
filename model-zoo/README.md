@@ -33,7 +33,7 @@ You can pull the model zoo from the central Maven repository by including the fo
 <dependency>
     <groupId>ai.djl</groupId>
     <artifactId>model-zoo</artifactId>
-    <version>0.10.0</version>
+    <version>0.12.0</version>
 </dependency>
 ```
 
@@ -61,7 +61,7 @@ The following is an example of the criteria to find a Resnet50-v1 model that has
                     .optFilter("dataset", "cifar10")
                     .build();
 
-    ZooModel<Image, Classifications> ssd = ModelZoo.loadModel(criteria));
+    ZooModel<Image, Classifications> ssd = criteria.loadModel());
 ```
 
 If you already known which `ModelLoader` to use, you can simply do the following:

@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.jar.JarEntry;
@@ -51,10 +52,15 @@ public final class ClassLoaderUtils {
         try {
             Path classesDir = path.resolve("classes");
             // we only consider .class files and skip .java files
-            List<Path> jarFiles =
-                    Files.list(path)
-                            .filter(p -> p.toString().endsWith(".jar"))
-                            .collect(Collectors.toList());
+            List<Path> jarFiles;
+            if (Files.isDirectory(path)) {
+                jarFiles =
+                        Files.list(path)
+                                .filter(p -> p.toString().endsWith(".jar"))
+                                .collect(Collectors.toList());
+            } else {
+                jarFiles = Collections.emptyList();
+            }
             final URL[] urls = new URL[jarFiles.size() + 1];
             urls[0] = classesDir.toUri().toURL();
             int index = 1;
@@ -62,14 +68,11 @@ public final class ClassLoaderUtils {
                 urls[index++] = p.toUri().toURL();
             }
 
+            final ClassLoader contextCl = Thread.currentThread().getContextClassLoader();
             ClassLoader cl =
                     AccessController.doPrivileged(
                             (PrivilegedAction<ClassLoader>)
-                                    () ->
-                                            new URLClassLoader(
-                                                    urls,
-                                                    Thread.currentThread()
-                                                            .getContextClassLoader()));
+                                    () -> new URLClassLoader(urls, contextCl));
             if (className != null && !className.isEmpty()) {
                 return initClass(cl, className);
             }
@@ -93,7 +96,7 @@ public final class ClassLoaderUtils {
 
     private static <T> T scanDirectory(ClassLoader cl, Path dir) throws IOException {
         if (!Files.isDirectory(dir)) {
-            logger.debug("Directory not exists: {}", dir);
+            logger.trace("Directory not exists: {}", dir);
             return null;
         }
         Collection<Path> files =
@@ -132,8 +135,16 @@ public final class ClassLoaderUtils {
         return null;
     }
 
+    /**
+     * Loads the specified class and constructs an instance.
+     *
+     * @param cl the {@code ClassLoader} to use
+     * @param className the class to be loaded
+     * @param <T> the type of the class
+     * @return an instance of the class, null if the class not found
+     */
     @SuppressWarnings("unchecked")
-    private static <T> T initClass(ClassLoader cl, String className) {
+    public static <T> T initClass(ClassLoader cl, String className) {
         try {
             Class<?> clazz = Class.forName(className, true, cl);
             Constructor<T> constructor = (Constructor<T>) clazz.getConstructor();

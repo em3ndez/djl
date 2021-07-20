@@ -20,7 +20,6 @@ import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import java.io.IOException;
 import java.net.URI;
@@ -58,7 +57,7 @@ public class S3RepositoryTest {
                         .optModelName("mlp")
                         .build();
 
-        try (ZooModel<NDList, NDList> model = ModelZoo.loadModel(criteria)) {
+        try (ZooModel<NDList, NDList> model = criteria.loadModel()) {
             Assert.assertEquals(model.getName(), "mlp");
         }
     }
@@ -81,7 +80,7 @@ public class S3RepositoryTest {
                         .optModelName("mlp")
                         .build();
 
-        try (ZooModel<NDList, NDList> model = ModelZoo.loadModel(criteria)) {
+        try (ZooModel<NDList, NDList> model = criteria.loadModel()) {
             Assert.assertEquals(model.getName(), "mlp");
         }
     }
@@ -108,12 +107,12 @@ public class S3RepositoryTest {
         Assert.assertEquals(
                 url.toString(), "mlrepo/model/cv/image_classification/ai/djl/mxnet/mlp/0.0.1/");
 
-        MRL mrl = MRL.model(Application.UNDEFINED, "ai.djl.localmodelzoo", "mlp");
-        Artifact artifact = repository.resolve(mrl, "0.0.1", null);
+        MRL mrl = repository.model(Application.UNDEFINED, "ai.djl.localmodelzoo", "mlp");
+        Artifact artifact = repository.resolve(mrl, null);
         Assert.assertNotNull(artifact);
 
         repository = Repository.newInstance("s3", "s3://djl-ai/non-exists");
-        artifact = repository.resolve(mrl, "0.0.1", null);
+        artifact = repository.resolve(mrl, null);
         Assert.assertNull(artifact);
     }
 

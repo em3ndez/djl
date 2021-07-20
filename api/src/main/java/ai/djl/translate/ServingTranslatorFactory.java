@@ -24,23 +24,24 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.util.JsonSerializable;
 import ai.djl.util.JsonUtils;
+import ai.djl.util.Pair;
 import ai.djl.util.PairList;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Type;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
@@ -50,44 +51,40 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** A {@link TranslatorFactory} that creates an generic {@link Translator}. */
-public class ServingTranslatorFactory implements TranslatorFactory<Input, Output> {
+public class ServingTranslatorFactory implements TranslatorFactory {
 
     private static final Logger logger = LoggerFactory.getLogger(ServingTranslatorFactory.class);
 
     /** {@inheritDoc} */
     @Override
-    public Translator<Input, Output> newInstance(Model model, Map<String, ?> arguments)
-            throws TranslateException {
-        Map<String, Object> merged = new ConcurrentHashMap<>(arguments);
-        Path modelDir = model.getModelPath();
-        String className = null;
-        Path manifestFile = modelDir.resolve("serving.properties");
-        if (Files.isRegularFile(manifestFile)) {
-            Properties prop = new Properties();
-            try (Reader reader = Files.newBufferedReader(manifestFile)) {
-                prop.load(reader);
-            } catch (IOException e) {
-                throw new TranslateException("Failed to load serving.properties file", e);
-            }
-            for (String key : prop.stringPropertyNames()) {
-                merged.putIfAbsent(key, prop.getProperty(key));
-            }
-            className = prop.getProperty("translator");
+    public Set<Pair<Type, Type>> getSupportedTypes() {
+        return Collections.singleton(new Pair<>(Input.class, Output.class));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Translator<?, ?> newInstance(
+            Class<?> input, Class<?> output, Model model, Map<String, ?> arguments) {
+        if (!isSupported(input, output)) {
+            throw new IllegalArgumentException("Unsupported input/output types.");
         }
+
+        Path modelDir = model.getModelPath();
+        String className = (String) arguments.get("translator");
 
         Path libPath = modelDir.resolve("libs");
         if (!Files.isDirectory(libPath)) {
             libPath = modelDir.resolve("lib");
             if (!Files.isDirectory(libPath)) {
-                return loadDefaultTranslator(merged);
+                return loadDefaultTranslator(arguments);
             }
         }
         ServingTranslator translator = findTranslator(libPath, className);
         if (translator != null) {
-            translator.setArguments(merged);
+            translator.setArguments(arguments);
             return translator;
         }
-        return loadDefaultTranslator(merged);
+        return loadDefaultTranslator(arguments);
     }
 
     private ServingTranslator findTranslator(Path path, String className) {
@@ -181,7 +178,7 @@ public class ServingTranslatorFactory implements TranslatorFactory<Input, Output
         return null;
     }
 
-    private Translator<Input, Output> loadDefaultTranslator(Map<String, Object> arguments) {
+    private Translator<Input, Output> loadDefaultTranslator(Map<String, ?> arguments) {
         String appName = (String) arguments.get("application");
         if (appName != null) {
             Application application = Application.of(appName);
@@ -195,12 +192,11 @@ public class ServingTranslatorFactory implements TranslatorFactory<Input, Output
         return new RawTranslator();
     }
 
-    private Translator<Input, Output> getImageClassificationTranslator(
-            Map<String, Object> arguments) {
+    private Translator<Input, Output> getImageClassificationTranslator(Map<String, ?> arguments) {
         return new ImageServingTranslator(ImageClassificationTranslator.builder(arguments).build());
     }
 
-    private Translator<Input, Output> getSsdTranslator(Map<String, Object> arguments) {
+    private Translator<Input, Output> getSsdTranslator(Map<String, ?> arguments) {
         return new ImageServingTranslator(SingleShotDetectionTranslator.builder(arguments).build());
     }
 
@@ -287,7 +283,7 @@ public class ServingTranslatorFactory implements TranslatorFactory<Input, Output
 
         /** {@inheritDoc} */
         @Override
-        public NDList processInput(TranslatorContext ctx, Input input) {
+        public NDList processInput(TranslatorContext ctx, Input input) throws TranslateException {
             ctx.setAttachment("input", input);
             PairList<String, byte[]> inputs = input.getContent();
             byte[] data = inputs.get("data");
@@ -298,7 +294,11 @@ public class ServingTranslatorFactory implements TranslatorFactory<Input, Output
                 data = input.getContent().valueAt(0);
             }
             NDManager manager = ctx.getNDManager();
-            return NDList.decode(manager, data);
+            try {
+                return NDList.decode(manager, data);
+            } catch (IllegalArgumentException e) {
+                throw new TranslateException("Input is not a NDList data type", e);
+            }
         }
 
         /** {@inheritDoc} */

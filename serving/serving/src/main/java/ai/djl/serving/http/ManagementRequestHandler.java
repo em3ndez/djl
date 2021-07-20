@@ -14,12 +14,15 @@ package ai.djl.serving.http;
 
 import ai.djl.ModelException;
 import ai.djl.repository.zoo.ModelNotFoundException;
+import ai.djl.serving.util.ConfigManager;
 import ai.djl.serving.util.NettyUtils;
+import ai.djl.serving.wlm.Endpoint;
 import ai.djl.serving.wlm.ModelInfo;
 import ai.djl.serving.wlm.ModelManager;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.QueryStringDecoder;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,23 +38,27 @@ import java.util.regex.Pattern;
  */
 public class ManagementRequestHandler extends HttpRequestHandler {
 
-    /** HTTP Paramater "synchronous". */
+    /** HTTP Parameter "synchronous". */
     private static final String SYNCHRONOUS_PARAMETER = "synchronous";
-    /** HTTP Paramater "initial_workers". */
-    private static final String INITIAL_WORKERS_PARAMETER = "initial_workers";
-    /** HTTP Paramater "url". */
+    /** HTTP Parameter "url". */
     private static final String URL_PARAMETER = "url";
-    /** HTTP Paramater "batch_size". */
+    /** HTTP Parameter "batch_size". */
     private static final String BATCH_SIZE_PARAMETER = "batch_size";
-    /** HTTP Paramater "model_name". */
+    /** HTTP Parameter "model_name". */
     private static final String MODEL_NAME_PARAMETER = "model_name";
-    /** HTTP Paramater "max_batch_delay". */
+    /** HTTP Parameter "model_version". */
+    private static final String MODEL_VERSION_PARAMETER = "model_version";
+    /** HTTP Parameter "engine". */
+    private static final String ENGINE_NAME_PARAMETER = "engine";
+    /** HTTP Parameter "gpu_id". */
+    private static final String GPU_ID_PARAMETER = "gpu_id";
+    /** HTTP Parameter "max_batch_delay". */
     private static final String MAX_BATCH_DELAY_PARAMETER = "max_batch_delay";
-    /** HTTP Paramater "max_idle_time". */
+    /** HTTP Parameter "max_idle_time". */
     private static final String MAX_IDLE_TIME__PARAMETER = "max_idle_time";
-    /** HTTP Paramater "max_worker". */
+    /** HTTP Parameter "max_worker". */
     private static final String MAX_WORKER_PARAMETER = "max_worker";
-    /** HTTP Paramater "min_worker". */
+    /** HTTP Parameter "min_worker". */
     private static final String MIN_WORKER_PARAMETER = "min_worker";
 
     private static final Pattern PATTERN = Pattern.compile("^/models([/?].*)?");
@@ -86,12 +93,18 @@ public class ManagementRequestHandler extends HttpRequestHandler {
             throw new MethodNotAllowedException();
         }
 
+        String modelName = segments[2];
+        String version = null;
+        if (segments.length > 3) {
+            version = segments[3];
+        }
+
         if (HttpMethod.GET.equals(method)) {
-            handleDescribeModel(ctx, segments[2]);
+            handleDescribeModel(ctx, modelName, version);
         } else if (HttpMethod.PUT.equals(method)) {
-            handleScaleModel(ctx, decoder, segments[2]);
+            handleScaleModel(ctx, decoder, modelName, version);
         } else if (HttpMethod.DELETE.equals(method)) {
-            handleUnregisterModel(ctx, segments[2]);
+            handleUnregisterModel(ctx, modelName, version);
         } else {
             throw new MethodNotAllowedException();
         }
@@ -108,9 +121,9 @@ public class ManagementRequestHandler extends HttpRequestHandler {
         }
 
         ModelManager modelManager = ModelManager.getInstance();
-        Map<String, ModelInfo> models = modelManager.getModels();
+        Map<String, Endpoint> endpoints = modelManager.getEndpoints();
 
-        List<String> keys = new ArrayList<>(models.keySet());
+        List<String> keys = new ArrayList<>(endpoints.keySet());
         Collections.sort(keys);
         ListModelsResponse list = new ListModelsResponse();
 
@@ -123,17 +136,18 @@ public class ManagementRequestHandler extends HttpRequestHandler {
 
         for (int i = pageToken; i < last; ++i) {
             String modelName = keys.get(i);
-            ModelInfo model = models.get(modelName);
-            list.addModel(modelName, model.getModelUrl());
+            for (ModelInfo m : endpoints.get(modelName).getModels()) {
+                list.addModel(modelName, m.getModelUrl());
+            }
         }
 
         NettyUtils.sendJsonResponse(ctx, list);
     }
 
-    private void handleDescribeModel(ChannelHandlerContext ctx, String modelName)
+    private void handleDescribeModel(ChannelHandlerContext ctx, String modelName, String version)
             throws ModelNotFoundException {
         ModelManager modelManager = ModelManager.getInstance();
-        DescribeModelResponse resp = modelManager.describeModel(modelName);
+        DescribeModelResponse resp = modelManager.describeModel(modelName, version);
         NettyUtils.sendJsonResponse(ctx, resp);
     }
 
@@ -147,11 +161,15 @@ public class ManagementRequestHandler extends HttpRequestHandler {
         if (modelName == null || modelName.isEmpty()) {
             modelName = ModelInfo.inferModelNameFromUrl(modelUrl);
         }
+        String version = NettyUtils.getParameter(decoder, MODEL_VERSION_PARAMETER, null);
+        int gpuId = NettyUtils.getIntParameter(decoder, GPU_ID_PARAMETER, -1);
+        String engineName = NettyUtils.getParameter(decoder, ENGINE_NAME_PARAMETER, null);
         int batchSize = NettyUtils.getIntParameter(decoder, BATCH_SIZE_PARAMETER, 1);
         int maxBatchDelay = NettyUtils.getIntParameter(decoder, MAX_BATCH_DELAY_PARAMETER, 100);
         int maxIdleTime = NettyUtils.getIntParameter(decoder, MAX_IDLE_TIME__PARAMETER, 60);
-        final int initialWorkers =
-                NettyUtils.getIntParameter(decoder, INITIAL_WORKERS_PARAMETER, 1);
+        int minWorkers = NettyUtils.getIntParameter(decoder, MIN_WORKER_PARAMETER, 1);
+        int defaultWorkers = ConfigManager.getInstance().getDefaultWorkers();
+        int maxWorkers = NettyUtils.getIntParameter(decoder, MAX_WORKER_PARAMETER, defaultWorkers);
         boolean synchronous =
                 Boolean.parseBoolean(
                         NettyUtils.getParameter(decoder, SYNCHRONOUS_PARAMETER, "true"));
@@ -159,22 +177,28 @@ public class ManagementRequestHandler extends HttpRequestHandler {
         final ModelManager modelManager = ModelManager.getInstance();
         CompletableFuture<ModelInfo> future =
                 modelManager.registerModel(
-                        modelName, modelUrl, batchSize, maxBatchDelay, maxIdleTime);
+                        modelName,
+                        version,
+                        modelUrl,
+                        engineName,
+                        gpuId,
+                        batchSize,
+                        maxBatchDelay,
+                        maxIdleTime);
         CompletableFuture<Void> f =
                 future.thenAccept(
-                        modelInfo ->
+                        m ->
                                 modelManager.triggerModelUpdated(
-                                        modelInfo
-                                                .scaleWorkers(initialWorkers, initialWorkers)
-                                                .configurePool(maxIdleTime, maxBatchDelay)
-                                                .configureModelBatch(batchSize)));
+                                        m.scaleWorkers(minWorkers, maxWorkers)
+                                                .configurePool(maxIdleTime)
+                                                .configureModelBatch(batchSize, maxBatchDelay)));
 
         if (synchronous) {
             final String msg = "Model \"" + modelName + "\" registered.";
             f = f.thenAccept(m -> NettyUtils.sendJsonResponse(ctx, new StatusResponse(msg)));
         } else {
             String msg = "Model \"" + modelName + "\" registration scheduled.";
-            NettyUtils.sendJsonResponse(ctx, new StatusResponse(msg));
+            NettyUtils.sendJsonResponse(ctx, new StatusResponse(msg), HttpResponseStatus.ACCEPTED);
         }
 
         f.exceptionally(
@@ -184,10 +208,10 @@ public class ManagementRequestHandler extends HttpRequestHandler {
                 });
     }
 
-    private void handleUnregisterModel(ChannelHandlerContext ctx, String modelName)
+    private void handleUnregisterModel(ChannelHandlerContext ctx, String modelName, String version)
             throws ModelNotFoundException {
         ModelManager modelManager = ModelManager.getInstance();
-        if (!modelManager.unregisterModel(modelName)) {
+        if (!modelManager.unregisterModel(modelName, version)) {
             throw new ModelNotFoundException("Model not found: " + modelName);
         }
         String msg = "Model \"" + modelName + "\" unregistered";
@@ -195,12 +219,11 @@ public class ManagementRequestHandler extends HttpRequestHandler {
     }
 
     private void handleScaleModel(
-            ChannelHandlerContext ctx, QueryStringDecoder decoder, String modelName)
+            ChannelHandlerContext ctx, QueryStringDecoder decoder, String modelName, String version)
             throws ModelNotFoundException {
         try {
-
             ModelManager modelManager = ModelManager.getInstance();
-            ModelInfo modelInfo = modelManager.getModels().get(modelName);
+            ModelInfo modelInfo = modelManager.getModel(modelName, version, false);
             if (modelInfo == null) {
                 throw new ModelNotFoundException("Model not found: " + modelName);
             }
@@ -217,14 +240,17 @@ public class ManagementRequestHandler extends HttpRequestHandler {
             int maxIdleTime =
                     NettyUtils.getIntParameter(
                             decoder, MAX_IDLE_TIME__PARAMETER, modelInfo.getMaxIdleTime());
+            int batchSize =
+                    NettyUtils.getIntParameter(
+                            decoder, BATCH_SIZE_PARAMETER, modelInfo.getBatchSize());
             int maxBatchDelay =
                     NettyUtils.getIntParameter(
                             decoder, MAX_BATCH_DELAY_PARAMETER, modelInfo.getMaxBatchDelay());
 
-            modelInfo =
-                    modelInfo
-                            .scaleWorkers(minWorkers, maxWorkers)
-                            .configurePool(maxIdleTime, maxBatchDelay);
+            modelInfo
+                    .scaleWorkers(minWorkers, maxWorkers)
+                    .configurePool(maxIdleTime)
+                    .configureModelBatch(batchSize, maxBatchDelay);
             modelManager.triggerModelUpdated(modelInfo);
 
             String msg =

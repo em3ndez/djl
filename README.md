@@ -35,7 +35,7 @@ The following pseudocode demonstrates running inference:
                     .optFilter("backbone", "resnet50") // choose network architecture
                     .build();
 
-    try (ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria)) {
+    try (ZooModel<Image, Classifications> model = criteria.loadModel()) {
         try (Predictor<Image, Classifications> predictor = model.newPredictor()) {
             Image img = ImageFactory.getInstance().fromUrl("http://..."); // read image
             Classifications result = predictor.predict(img);
@@ -87,6 +87,8 @@ The following pseudocode demonstrates running training:
 - [JavaDoc API Reference](https://javadoc.djl.ai/)
 
 ## Release Notes
+* [0.12.0](https://github.com/deepjavalibrary/djl/releases/tag/v0.12.0) ([Code](https://github.com/deepjavalibrary/djl/tree/v0.12.0))
+* [0.11.0](https://github.com/deepjavalibrary/djl/releases/tag/v0.11.0) ([Code](https://github.com/deepjavalibrary/djl/tree/v0.11.0))
 * [0.10.0](https://github.com/deepjavalibrary/djl/releases/tag/v0.10.0) ([Code](https://github.com/deepjavalibrary/djl/tree/v0.10.0))
 * [0.9.0](https://github.com/deepjavalibrary/djl/releases/tag/v0.9.0) ([Code](https://github.com/deepjavalibrary/djl/tree/v0.9.0))
 * [0.8.0](https://github.com/deepjavalibrary/djl/releases/tag/v0.8.0) ([Code](https://github.com/deepjavalibrary/djl/tree/v0.8.0))
@@ -119,8 +121,6 @@ To increase build speed, you can use the following command to skip unit tests:
 # for Windows:
 gradlew build -x test
 ```
-
-**Note:** SpotBugs is not compatible with JDK 11+. SpotBugs will not be executed if you are using JDK 11+.
 
 ### Importing into eclipse
 
