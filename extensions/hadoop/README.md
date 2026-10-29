@@ -19,7 +19,7 @@ The following pseudocode demonstrates how to load model from HDFS url:
                 .optModelName("resnet18-v1")
                 .build();
 
-    ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria);
+    ZooModel<Image, Classifications> model = criteria.loadModel();
 ```
 
 See [How to load a model](../../docs/load_model.md) for more detail.
@@ -34,7 +34,7 @@ If you want to customize your Hadoop configuration, you can manually register a 
 
 ## Documentation
 
-The latest javadocs can be found on the [djl.ai website](https://javadoc.io/ai.djl.hadoop/hadoop/latest/index.html).
+The latest javadocs can be found on [here](https://javadoc.io/doc/ai.djl.hadoop/hadoop/latest/index.html).
 
 You can also build the latest javadocs locally using the following command:
 
@@ -52,6 +52,6 @@ You can pull the module from the central Maven repository by including the follo
 <dependency>
     <groupId>ai.djl.hadoop</groupId>
     <artifactId>hadoop</artifactId>
-    <version>0.10.0</version>
+    <version>0.39.0</version>
 </dependency>
 ```

@@ -16,6 +16,8 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.util.Pair;
 import ai.djl.util.PairList;
+
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -173,6 +175,15 @@ public class Pipeline {
         }
 
         return new NDList(arrays);
+    }
+
+    /**
+     * Returns the list of transforms.
+     *
+     * @return the list of transforms
+     */
+    public List<Transform> getTransforms() {
+        return transforms.values();
     }
 
     private static final class IndexKey {

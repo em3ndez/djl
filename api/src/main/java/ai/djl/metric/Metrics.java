@@ -12,7 +12,6 @@
  */
 package ai.djl.metric;
 
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -20,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 /**
@@ -41,13 +41,31 @@ import java.util.stream.Collectors;
  */
 public class Metrics {
 
-    private static final MetricValueComparator VALUE_COMPARATOR = new MetricValueComparator();
-
     private Map<String, List<Metric>> metrics;
+    private int limit;
+    private BiConsumer<Metrics, String> onLimit;
 
     /** Constructs an empty {@code Metrics} instance. */
     public Metrics() {
         metrics = new ConcurrentHashMap<>();
+    }
+
+    /**
+     * Sets the max size for each metric.
+     *
+     * @param limit the max size for each metric
+     */
+    public void setLimit(int limit) {
+        this.limit = limit;
+    }
+
+    /**
+     * Sets the callback function when hit the limit.
+     *
+     * @param onLimit the callback function
+     */
+    public void setOnLimit(BiConsumer<Metrics, String> onLimit) {
+        this.onLimit = onLimit;
     }
 
     /**
@@ -60,6 +78,12 @@ public class Metrics {
                 metrics.computeIfAbsent(
                         metric.getMetricName(),
                         v -> Collections.synchronizedList(new ArrayList<>()));
+        if (limit > 0 && list.size() >= limit) {
+            if (onLimit != null) {
+                onLimit.accept(this, metric.getMetricName());
+            }
+            list.clear();
+        }
         list.add(metric);
     }
 
@@ -79,9 +103,10 @@ public class Metrics {
      * @param name the metric name
      * @param value the metric value
      * @param unit the metric unit
+     * @param dimensions the metric dimensions
      */
-    public void addMetric(String name, Number value, String unit) {
-        addMetric(new Metric(name, value, unit));
+    public void addMetric(String name, Number value, Unit unit, Dimension... dimensions) {
+        addMetric(new Metric(name, value, unit, dimensions));
     }
 
     /**
@@ -146,9 +171,10 @@ public class Metrics {
         }
 
         List<Metric> list = new ArrayList<>(metric);
-        list.sort(VALUE_COMPARATOR);
+        list.sort(Comparator.comparingDouble(Metric::getValue));
         int index = metric.size() * percentile / 100;
-        return list.get(index);
+        Metric m = list.get(index);
+        return m.copyOf(m.getMetricName() + "_p" + percentile);
     }
 
     /**
@@ -163,23 +189,6 @@ public class Metrics {
             throw new IllegalArgumentException("Metric name not found: " + metricName);
         }
 
-        return metric.stream().collect(Collectors.averagingDouble(m -> m.getValue().doubleValue()));
-    }
-
-    /** Comparator based on {@code Metric}'s value field. */
-    private static final class MetricValueComparator implements Comparator<Metric>, Serializable {
-
-        private static final long serialVersionUID = 1L;
-
-        /** {@inheritDoc} */
-        @Override
-        public int compare(Metric o1, Metric o2) {
-            Number n1 = o1.getValue();
-            Number n2 = o2.getValue();
-            if (n1 instanceof Double || n1 instanceof Float) {
-                return Double.compare(n1.doubleValue(), n2.doubleValue());
-            }
-            return Long.compare(n1.longValue(), n2.longValue());
-        }
+        return metric.stream().collect(Collectors.averagingDouble(Metric::getValue));
     }
 }

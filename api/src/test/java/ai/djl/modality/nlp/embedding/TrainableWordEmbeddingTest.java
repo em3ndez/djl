@@ -12,16 +12,20 @@
  */
 package ai.djl.modality.nlp.embedding;
 
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.DefaultVocabulary;
 import ai.djl.modality.nlp.preprocess.SimpleTokenizer;
 import ai.djl.ndarray.NDManager;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
 public class TrainableWordEmbeddingTest {
     private static final String TEST_STRING =
-            "Deep Java Library (DJL) is an open-source, high-level, engine-agnostic Java framework for deep learning. DJL is designed to be easy to get started with and simple to\n"
-                    + "use for Java developers. DJL provides a native Java development experience and functions like any other regular Java library.\n";
+            "Deep Java Library (DJL) is an open-source, high-level, engine-agnostic Java framework"
+                + " for deep learning. DJL is designed to be easy to get started with and simple"
+                + " to\n"
+                + "use for Java developers. DJL provides a native Java development experience and"
+                + " functions like any other regular Java library.\n";
     private static final String UNKNOWN_TOKEN = "UNKNOWN_TOKEN";
 
     @Test
@@ -29,8 +33,11 @@ public class TrainableWordEmbeddingTest {
         TrainableWordEmbedding trainableWordEmbedding =
                 TrainableWordEmbedding.builder()
                         .setVocabulary(
-                                new SimpleVocabulary(new SimpleTokenizer().tokenize(TEST_STRING)))
-                        .optNumEmbeddings(10)
+                                DefaultVocabulary.builder()
+                                        .add(new SimpleTokenizer().tokenize(TEST_STRING))
+                                        .optMaxTokens(10)
+                                        .optUnknownToken()
+                                        .build())
                         .optUseDefault(true)
                         .build();
         try (NDManager manager = NDManager.newBaseManager()) {

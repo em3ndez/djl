@@ -19,7 +19,9 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.index.NDIndex;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
+import ai.djl.translate.ArgumentsUtil;
 import ai.djl.translate.TranslatorContext;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -136,7 +138,7 @@ public class SimplePoseTranslator extends BaseImageTranslator<Joints> {
         /** {@inheritDoc} */
         @Override
         protected void configPostProcess(Map<String, ?> arguments) {
-            threshold = getFloatValue(arguments, "threshold", 0.2f);
+            threshold = ArgumentsUtil.floatValue(arguments, "threshold", 0.2f);
         }
 
         /**

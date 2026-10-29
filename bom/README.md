@@ -22,7 +22,7 @@ will need to mention the type as pom and the scope as import) as the following:
         <dependency>
             <groupId>ai.djl</groupId>
             <artifactId>bom</artifactId>
-            <version>0.10.0</version>
+            <version>0.39.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -38,7 +38,7 @@ will need to mention the type as pom and the scope as import) as the following:
         <dependency>
             <groupId>ai.djl</groupId>
             <artifactId>bom</artifactId>
-            <version>0.10.0</version>
+            <version>0.39.0</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -57,11 +57,6 @@ will need to mention the type as pom and the scope as import) as the following:
         <groupId>ai.djl.mxnet</groupId>
         <artifactId>mxnet-engine</artifactId>
     </dependency>
-    <dependency>
-        <groupId>ai.djl.mxnet</groupId>
-        <artifactId>mxnet-native-auto</artifactId>
-        <scope>runtime</scope>
-    </dependency>
 </dependencies>
 ```
 
@@ -70,12 +65,11 @@ will need to mention the type as pom and the scope as import) as the following:
 - First you need add BOM into your build.gradle file as the following:
 
 ```
-    implementation platform("ai.djl:bom:0.10.0")
+    implementation platform("ai.djl:bom:0.39.0")
 ```
 
 - Then you import the desired DJL modules into to you pom.xml file (no version is needed):
 
 ```
     implementation "ai.djl.pytorch:pytorch-model-zoo" // No version required
-    implementation "ai.djl.pytorch:pytorch-native-auto"  // No version required
 ```

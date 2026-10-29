@@ -5,8 +5,10 @@
 This module contains the NLP support with fastText implementation.
 
 fastText module's implementation in DJL is not considered as an Engine, it doesn't support Trainer and Predictor.
-The training and inference functionality is directly provided through [FtModel](https://javadoc.io/doc/ai.djl.fasttext/fasttext-engine/latest/ai/djl/fasttext/FtModel.html)
-class. You can find examples [here](https://github.com/deepjavalibrary/djl/blob/master/extensions/fasttext/src/test/java/ai/djl/fasttext/CookingStackExchangeTest.java).
+Training is only supported by using [TrainFastText](https://javadoc.io/doc/ai.djl.fasttext/fasttext-engine/latest/ai/djl/fasttext/TrainFastText.html).
+This produces a special block which can perform inference on its own or by using a model and predictor.
+Pre-trained FastText models can also be loaded by using the standard DJL criteria.
+You can find examples [here](https://github.com/deepjavalibrary/djl/blob/master/extensions/fasttext/src/test/java/ai/djl/fasttext/CookingStackExchangeTest.java).
 
 Current implementation has the following limitations:
 
@@ -15,7 +17,7 @@ Current implementation has the following limitations:
 
 ## Documentation
 
-The latest javadocs can be found on the [djl.ai website](https://javadoc.io/doc/ai.djl.fasttext/fasttext-engine/latest/index.html).
+The latest javadocs can be found on [here](https://javadoc.io/doc/ai.djl.fasttext/fasttext-engine/latest/index.html).
 
 You can also build the latest javadocs locally using the following command:
 
@@ -32,7 +34,7 @@ You can pull the fastText engine from the central Maven repository by including 
 <dependency>
     <groupId>ai.djl.fasttext</groupId>
     <artifactId>fasttext-engine</artifactId>
-    <version>0.10.0</version>
+    <version>0.39.0</version>
 </dependency>
 ```
 

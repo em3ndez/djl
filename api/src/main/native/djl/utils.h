@@ -14,6 +14,7 @@
 #ifndef DJL_UTILS_H
 #define DJL_UTILS_H
 
+#include <cstdint>
 #include <jni.h>
 #include <vector>
 #include <string>
@@ -29,9 +30,21 @@ inline std::string GetStringFromJString(JNIEnv* env, jstring jstr) {
   if (jstr == nullptr) {
     return std::string();
   }
-  const char* c_str = env->GetStringUTFChars(jstr, JNI_FALSE);
-  std::string str = std::string(c_str);
-  env->ReleaseStringUTFChars(jstr, c_str);
+
+  // TODO: cache reflection to improve performance
+  const jclass string_class = env->GetObjectClass(jstr);
+  const jmethodID getbytes_method = env->GetMethodID(string_class, "getBytes", "(Ljava/lang/String;)[B");
+
+  const jstring charset = env->NewStringUTF("UTF-8");
+  const jbyteArray jbytes = (jbyteArray) env->CallObjectMethod(jstr, getbytes_method, charset);
+  env->DeleteLocalRef(charset);
+
+  const jsize length = env->GetArrayLength(jbytes);
+  jbyte* c_str = env->GetByteArrayElements(jbytes, NULL);
+  std::string str = std::string(reinterpret_cast<const char *>(c_str), length);
+
+  env->ReleaseByteArrayElements(jbytes, c_str, RELEASE_MODE);
+  env->DeleteLocalRef(jbytes);
   return str;
 }
 
@@ -53,7 +66,7 @@ inline jlongArray GetPtrArrayFromContainer(JNIEnv* env, T1 list) {
   size_t len = list.size();
   jlongArray jarray = env->NewLongArray(len);
   std::vector<jlong> jptrs;
-  jptrs.reserve(len);
+  jptrs.resize(len);
   for (size_t i = 0; i < len; ++i) {
     const auto* element_ptr = new T2(list[i]);
     jptrs[i] = reinterpret_cast<uintptr_t>(element_ptr);
@@ -99,10 +112,24 @@ inline std::vector<std::string> GetVecFromJStringArray(JNIEnv* env, jobjectArray
 
 // String[]
 inline jobjectArray GetStringArrayFromVec(JNIEnv* env, const std::vector <std::string> &vec) {
-  jobjectArray array = env->NewObjectArray(vec.size(), env->FindClass("Ljava/lang/String;"), nullptr);
+  jobjectArray array = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
+
+  // TODO: cache reflection to improve performance
+  const jclass string_class = env->FindClass("java/lang/String");
+  const jmethodID ctor = env->GetMethodID(string_class, "<init>", "([BLjava/lang/String;)V");
+  const jstring charset = env->NewStringUTF("UTF-8");
+
   for (int i = 0; i < vec.size(); ++i) {
-    env->SetObjectArrayElement(array, i, env->NewStringUTF(vec[i].c_str()));
+    const char* c_str = vec[i].c_str();
+    int len = vec[i].length();
+    auto jbytes = env->NewByteArray(len);
+    env->SetByteArrayRegion(jbytes, 0, len, reinterpret_cast<const jbyte*>(c_str));
+    jobject jstr = env->NewObject(string_class, ctor, jbytes, charset);
+    env->DeleteLocalRef(jbytes);
+    env->SetObjectArrayElement(array, i, jstr);
   }
+
+  env->DeleteLocalRef(charset);
   return array;
 }
 
@@ -112,12 +139,44 @@ inline jintArray GetIntArrayFromVec(JNIEnv* env, const std::vector<int> &vec) {
   return array;
 }
 
+inline jlongArray GetLongArrayFromVec(JNIEnv* env, const std::vector<size_t> &vec) {
+    jlongArray array = env->NewLongArray(vec.size());
+    env->SetLongArrayRegion(array, 0, vec.size(), reinterpret_cast<const jlong*>(vec.data()));
+    return array;
+}
+
 inline jobjectArray Get2DIntArrayFrom2DVec(JNIEnv* env, const std::vector<std::vector<int>> &vec) {
   jobjectArray array = env->NewObjectArray(vec.size(), env->FindClass("[I"), nullptr);
   for (size_t i = 0; i < vec.size(); ++i) {
     env->SetObjectArrayElement(array, i, djl::utils::jni::GetIntArrayFromVec(env, vec[i]));
   }
   return array;
+}
+
+inline jobjectArray Get2DLongArrayFrom2DVec(JNIEnv* env, const std::vector<std::vector<size_t>> &vec) {
+    jobjectArray array = env->NewObjectArray(vec.size(), env->FindClass("[J"), nullptr);
+    for (size_t i = 0; i < vec.size(); ++i) {
+        env->SetObjectArrayElement(array, i, djl::utils::jni::GetLongArrayFromVec(env, vec[i]));
+    }
+    return array;
+}
+
+inline std::vector<std::vector<size_t>> Get2DVecFrom2DLongArray(JNIEnv* env, jobjectArray array) {
+    std::vector <std::vector<size_t>> vec;
+    jsize len = env->GetArrayLength(array);
+    vec.reserve(len);
+    for (int i = 0; i < len; ++i) {
+        auto long_array = (jlongArray) env->GetObjectArrayElement(array, i);
+        jlong* jarr = env->GetLongArrayElements(long_array, JNI_FALSE);
+        std::vector<size_t> temp;
+        temp.reserve(env->GetArrayLength(long_array));
+        for (size_t j = 0; j < env->GetArrayLength(long_array); ++j) {
+            temp.emplace_back(jarr[j]);
+        }
+        vec.emplace_back(temp);
+        env->ReleaseLongArrayElements(long_array, jarr, RELEASE_MODE);
+    }
+    return vec;
 }
 
 // String[][]

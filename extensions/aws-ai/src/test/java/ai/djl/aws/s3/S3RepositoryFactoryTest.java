@@ -12,8 +12,12 @@
  */
 package ai.djl.aws.s3;
 
+import ai.djl.repository.Repository;
+
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
+
+import java.net.URI;
 
 public class S3RepositoryFactoryTest {
 
@@ -25,16 +29,13 @@ public class S3RepositoryFactoryTest {
     @Test(expectedExceptions = IllegalArgumentException.class)
     public void testUnsupportedProtocol() {
         S3RepositoryFactory factory = new S3RepositoryFactory();
-        factory.newInstance("s3", "https://djl-not-exists/");
+        factory.newInstance("s3", URI.create("https://djl-not-exists/"));
     }
 
     @Test
     public void testS3RepositoryFactory() {
-        S3RepositoryFactory factory = new S3RepositoryFactory();
-        factory.newInstance("s3", "s3://djl-not-exists?artifact_id=mlp&model_name=mlp");
-
-        factory.newInstance("s3", "s3://djl-not-exists");
-
-        factory.newInstance("s3", "s3://djl-not-exists/?model_name=mlp");
+        Repository.newInstance("s3", "s3://djl-not-exists?artifact_id=mlp&model_name=mlp");
+        Repository.newInstance("s3", "s3://djl-not-exists");
+        Repository.newInstance("s3", "s3://djl-not-exists/?model_name=mlp");
     }
 }

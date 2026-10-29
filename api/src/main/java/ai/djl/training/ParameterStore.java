@@ -14,9 +14,11 @@
 package ai.djl.training;
 
 import ai.djl.Device;
+import ai.djl.Device.MultiDevice;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
 import ai.djl.nn.Parameter;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -33,6 +35,11 @@ public class ParameterStore {
     private Map<Device, Integer> deviceMap;
     private boolean copy;
     private ParameterServer parameterServer;
+
+    /** Constructs a new {@code ParameterStore} instance. */
+    public ParameterStore() {
+        this(NDManager.newBaseManager(), false);
+    }
 
     /**
      * Constructs an empty {@code ParameterStore}.
@@ -58,6 +65,10 @@ public class ParameterStore {
         this.parameterServer = parameterServer;
         deviceMap.clear();
         for (int i = 0; i < devices.length; ++i) {
+            if (devices[i] instanceof MultiDevice) {
+                throw new IllegalArgumentException(
+                        "The parameter store does not support MultiDevices");
+            }
             if (deviceMap.put(devices[i], i) != null) {
                 throw new IllegalArgumentException("Duplicated devices are not allowed.");
             }
@@ -159,10 +170,6 @@ public class ParameterStore {
         private ParameterData(Parameter parameter) {
             this.parameter = parameter;
             list = Collections.synchronizedList(new ArrayList<>());
-        }
-
-        private List<NDArray> getNDArrays() {
-            return list;
         }
 
         private boolean isEmpty() {

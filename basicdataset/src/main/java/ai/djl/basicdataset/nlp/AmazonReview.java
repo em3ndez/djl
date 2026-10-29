@@ -12,19 +12,21 @@
  */
 package ai.djl.basicdataset.nlp;
 
-import ai.djl.Application;
+import ai.djl.Application.NLP;
 import ai.djl.basicdataset.BasicDatasets;
 import ai.djl.basicdataset.tabular.CsvDataset;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.util.Progress;
+
+import org.apache.commons.csv.CSVFormat;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import org.apache.commons.csv.CSVFormat;
 
 /**
  * The {@link AmazonReview} dataset contains a {@link ai.djl.Application.NLP#SENTIMENT_ANALYSIS} set
@@ -35,7 +37,7 @@ public class AmazonReview extends CsvDataset {
     private static final String VERSION = "1.0";
     private static final String ARTIFACT_ID = "amazon_reviews";
 
-    private Resource resource;
+    private MRL mrl;
     private String datasetName;
     private boolean prepared;
 
@@ -46,8 +48,7 @@ public class AmazonReview extends CsvDataset {
      */
     protected AmazonReview(Builder builder) {
         super(builder);
-        MRL mrl = MRL.dataset(Application.NLP.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, VERSION);
+        mrl = builder.getMrl();
         datasetName = builder.datasetName;
     }
 
@@ -60,10 +61,10 @@ public class AmazonReview extends CsvDataset {
 
         Map<String, String> filter = new ConcurrentHashMap<>();
         filter.put("dataset", datasetName);
-        Artifact artifact = resource.match(filter);
-        resource.prepare(artifact, progress);
+        Artifact artifact = Objects.requireNonNull(mrl.match(filter));
+        mrl.prepare(artifact, progress);
 
-        Path dir = resource.getRepository().getResourceDirectory(artifact);
+        Path dir = mrl.getRepository().getResourceDirectory(artifact);
         Path csvFile = dir.resolve(artifact.getFiles().values().iterator().next().getName());
         csvUrl = csvFile.toUri().toURL();
         super.prepare(progress);
@@ -92,7 +93,7 @@ public class AmazonReview extends CsvDataset {
             repository = BasicDatasets.REPOSITORY;
             groupId = BasicDatasets.GROUP_ID;
             artifactId = ARTIFACT_ID;
-            csvFormat = CSVFormat.TDF.withQuote(null).withHeader();
+            csvFormat = CSVFormat.TDF.builder().setQuote(null).setHeader().get();
             datasetName = "us_Digital_Software";
         }
 
@@ -162,6 +163,10 @@ public class AmazonReview extends CsvDataset {
                 addNumericLabel("star_rating");
             }
             return new AmazonReview(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(NLP.ANY, groupId, artifactId, VERSION);
         }
     }
 }

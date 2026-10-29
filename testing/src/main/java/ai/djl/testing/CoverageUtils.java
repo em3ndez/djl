@@ -12,6 +12,8 @@
  */
 package ai.djl.testing;
 
+import ai.djl.util.ClassLoaderUtils;
+
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
@@ -25,6 +27,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -36,7 +39,9 @@ import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+@SuppressWarnings({"PMD.AvoidAccessibilityAlteration", "PMD.TestClassWithoutTestCases"})
 public final class CoverageUtils {
 
     private CoverageUtils() {}
@@ -49,7 +54,7 @@ public final class CoverageUtils {
             if (clazz.isEnum()) {
                 obj = clazz.getEnumConstants()[0];
             } else {
-                Constructor<?>[] constructors = clazz.getConstructors();
+                Constructor<?>[] constructors = clazz.getDeclaredConstructors();
                 for (Constructor<?> con : constructors) {
                     try {
                         Class<?>[] types = con.getParameterTypes();
@@ -68,6 +73,8 @@ public final class CoverageUtils {
                 continue;
             }
 
+            Field[] f = clazz.getDeclaredFields();
+            Set<String> fields = Arrays.stream(f).map(Field::getName).collect(Collectors.toSet());
             Method[] methods = clazz.getDeclaredMethods();
             for (Method method : methods) {
                 String methodName = method.getName();
@@ -80,7 +87,9 @@ public final class CoverageUtils {
                                     || "hashCode".equals(methodName))) {
                         method.invoke(obj);
                     } else if (parameterCount == 1
-                            && (methodName.startsWith("set") || "fromValue".equals(methodName))) {
+                            && (methodName.startsWith("set")
+                                    || "fromValue".equals(methodName)
+                                    || fields.contains(methodName))) {
                         Class<?> type = method.getParameterTypes()[0];
                         method.invoke(obj, getMockInstance(type, true));
                     } else if ("equals".equals(methodName)) {
@@ -98,13 +107,18 @@ public final class CoverageUtils {
 
     private static List<Class<?>> getClasses(Class<?> clazz)
             throws IOException, ReflectiveOperationException, URISyntaxException {
-        ClassLoader appClassLoader = Thread.currentThread().getContextClassLoader();
-        Field field = appClassLoader.getClass().getDeclaredField("ucp");
+        ClassLoader appClassLoader = ClassLoaderUtils.getContextClassLoader();
+        Field field;
+        try {
+            field = appClassLoader.getClass().getDeclaredField("ucp");
+        } catch (NoSuchFieldException e) {
+            field = appClassLoader.getClass().getSuperclass().getDeclaredField("ucp");
+        }
         field.setAccessible(true);
         Object ucp = field.get(appClassLoader);
         Method method = ucp.getClass().getDeclaredMethod("getURLs");
         URL[] urls = (URL[]) method.invoke(ucp);
-        ClassLoader cl = new TestClassLoader(urls, Thread.currentThread().getContextClassLoader());
+        ClassLoader cl = new TestClassLoader(urls, ClassLoaderUtils.getContextClassLoader());
 
         URL url = clazz.getProtectionDomain().getCodeSource().getLocation();
         String path = url.getPath();
@@ -117,20 +131,24 @@ public final class CoverageUtils {
 
         Path classPath = Paths.get(url.toURI());
         if (Files.isDirectory(classPath)) {
-            Collection<Path> files =
-                    Files.walk(classPath)
-                            .filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class"))
-                            .collect(Collectors.toList());
-            for (Path file : files) {
-                Path p = classPath.relativize(file);
-                String className = p.toString();
-                className = className.substring(0, className.lastIndexOf('.'));
-                className = className.replace(File.separatorChar, '.');
+            try (Stream<Path> stream = Files.walk(classPath)) {
+                Collection<Path> files =
+                        stream.filter(
+                                        p ->
+                                                Files.isRegularFile(p)
+                                                        && p.toString().endsWith(".class"))
+                                .collect(Collectors.toList());
+                for (Path file : files) {
+                    Path p = classPath.relativize(file);
+                    String className = p.toString();
+                    className = className.substring(0, className.lastIndexOf('.'));
+                    className = className.replace(File.separatorChar, '.');
 
-                try {
-                    classList.add(Class.forName(className, true, cl));
-                } catch (Error ignore) {
-                    // ignore
+                    try {
+                        classList.add(Class.forName(className, true, cl));
+                    } catch (Throwable ignore) {
+                        // ignore
+                    }
                 }
             }
         } else if (path.toLowerCase().endsWith(".jar")) {
@@ -144,7 +162,7 @@ public final class CoverageUtils {
                         fileName = fileName.replace('/', '.');
                         try {
                             classList.add(Class.forName(fileName, true, cl));
-                        } catch (Error ignore) {
+                        } catch (Throwable ignore) {
                             // ignore
                         }
                     }

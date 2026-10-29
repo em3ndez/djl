@@ -25,6 +25,7 @@ import ai.djl.nn.Block;
 import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -48,6 +49,7 @@ public abstract class Embedding<T> extends AbstractBlock implements AbstractInde
 
     protected Parameter embedding;
 
+    @SuppressWarnings("this-escape")
     protected Embedding(BaseBuilder<T, ?> baseBuilder) {
         super(VERSION);
         embeddingSize = baseBuilder.embeddingSize;
@@ -77,17 +79,21 @@ public abstract class Embedding<T> extends AbstractBlock implements AbstractInde
      *
      * @param embedding the embedding array
      */
-    public Embedding(NDArray embedding) {
+    protected Embedding(NDArray embedding) {
         this(embedding, SparseFormat.DENSE);
     }
 
     /**
      * Constructs a pretrained embedding.
      *
+     * <p>Because it is created with preTrained data, it is created as a frozen block. If you with
+     * to update it, call {@link Block#freezeParameters(boolean)}.
+     *
      * @param embedding the embedding array
      * @param format whether to compute row sparse gradient in the backward calculation
      */
-    public Embedding(NDArray embedding, SparseFormat format) {
+    @SuppressWarnings("this-escape")
+    protected Embedding(NDArray embedding, SparseFormat format) {
         super(VERSION);
         numEmbeddings = Math.toIntExact(embedding.getShape().get(0));
         embeddingSize = Math.toIntExact(embedding.getShape().get(1));
@@ -100,6 +106,7 @@ public abstract class Embedding<T> extends AbstractBlock implements AbstractInde
                                 .build());
         this.embedding.setArray(embedding);
         inputShapes = new Shape[] {new Shape(-1)};
+        freezeParameters(true);
     }
 
     /** {@inheritDoc} */

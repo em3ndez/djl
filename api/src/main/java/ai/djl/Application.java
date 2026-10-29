@@ -51,37 +51,87 @@ public class Application {
             case "cv":
                 return CV.ANY;
             case "cv/image_classification":
+            case "image_classification":
                 return CV.IMAGE_CLASSIFICATION;
+            case "cv/zero_shot_image_classification":
+            case "zero_shot_image_classification":
+                return CV.ZERO_SHOT_IMAGE_CLASSIFICATION;
             case "cv/object_detection":
+            case "object_detection":
                 return CV.OBJECT_DETECTION;
+            case "cv/zero_shot_object_detection":
+            case "zero_shot_object_detection":
+                return CV.ZERO_SHOT_OBJECT_DETECTION;
             case "cv/semantic_segmentation":
+            case "semantic_segmentation":
                 return CV.SEMANTIC_SEGMENTATION;
             case "cv/instance_segmentation":
+            case "instance_segmentation":
                 return CV.INSTANCE_SEGMENTATION;
+            case "cv/mask_generation":
+            case "mask_generation":
+                return CV.MASK_GENERATION;
             case "cv/pose_estimation":
+            case "pose_estimation":
                 return CV.POSE_ESTIMATION;
             case "cv/action_recognition":
+            case "action_recognition":
                 return CV.ACTION_RECOGNITION;
             case "cv/word_recognition":
+            case "word_recognition":
                 return CV.WORD_RECOGNITION;
+            case "cv/image_generation":
+            case "image_generation":
+                return CV.IMAGE_GENERATION;
+            case "cv/image_enhancement":
+            case "image_enhancement":
+                return CV.IMAGE_ENHANCEMENT;
             case "nlp":
                 return NLP.ANY;
+            case "nlp/fill_mask":
+            case "fill_mask":
+                return NLP.FILL_MASK;
             case "nlp/question_answer":
+            case "question_answering":
                 return NLP.QUESTION_ANSWER;
             case "nlp/text_classification":
+            case "text_classification":
                 return NLP.TEXT_CLASSIFICATION;
             case "nlp/sentiment_analysis":
+            case "sentiment_analysis":
                 return NLP.SENTIMENT_ANALYSIS;
+            case "nlp/token_classification":
+            case "token_classification":
+                return NLP.TOKEN_CLASSIFICATION;
+            case "nlp/zero_shot_classification":
+            case "zero_shot_classification":
+                return NLP.ZERO_SHOT_CLASSIFICATION;
             case "nlp/word_embedding":
+            case "word_embedding":
                 return NLP.WORD_EMBEDDING;
+            case "nlp/text_generation":
+            case "text_generation":
+                return NLP.TEXT_GENERATION;
             case "nlp/machine_translation":
+            case "machine_translation":
                 return NLP.MACHINE_TRANSLATION;
             case "nlp/multiple_choice":
+            case "multiple_choice":
                 return NLP.MULTIPLE_CHOICE;
+            case "nlp/text_embedding":
+            case "text_embedding":
+            case "sentence_similarity":
+                return NLP.TEXT_EMBEDDING;
             case "tabular":
                 return Tabular.ANY;
             case "tabular/linear_regression":
                 return Tabular.LINEAR_REGRESSION;
+            case "tabular/softmax_regression":
+                return Tabular.SOFTMAX_REGRESSION;
+            case "audio":
+                return Audio.ANY;
+            case "timeseries/forecasting":
+                return TimeSeries.FORECASTING;
             case "undefined":
             default:
                 return UNDEFINED;
@@ -138,6 +188,15 @@ public class Application {
         Application IMAGE_CLASSIFICATION = new Application("cv/image_classification");
 
         /**
+         * An application where images are assigned a single class name.
+         *
+         * <p>The typical signature is Model&lt;{@link ai.djl.modality.cv.VisionLanguageInput},
+         * {@link ai.djl.modality.Classifications}&gt;.
+         */
+        Application ZERO_SHOT_IMAGE_CLASSIFICATION =
+                new Application("cv/zero_shot_image_classification");
+
+        /**
          * An application that finds zero or more objects in an image, the object class (see image
          * classification), and their locations as a {@link ai.djl.modality.cv.output.BoundingBox}.
          *
@@ -149,6 +208,18 @@ public class Application {
          */
         Application OBJECT_DETECTION = new Application("cv/object_detection");
 
+        /**
+         * An application that finds zero or more objects in an image, the object class (see image
+         * classification), and their locations as a {@link ai.djl.modality.cv.output.BoundingBox}.
+         *
+         * <p>The typical signature is Model&lt;{@link ai.djl.modality.cv.VisionLanguageInput},
+         * {@link ai.djl.modality.cv.output.DetectedObjects}&gt;.
+         *
+         * @see <a href="https://d2l.djl.ai/chapter_computer-vision/bounding-box.html">The D2L
+         *     chapter on object detection</a>
+         */
+        Application ZERO_SHOT_OBJECT_DETECTION = new Application("cv/zero_shot_object_detection");
+
         /** An application that classifies each pixel in an image into a category. */
         Application SEMANTIC_SEGMENTATION = new Application("cv/semantic_segmentation");
 
@@ -157,6 +228,12 @@ public class Application {
          * classification), and their location as a pixel map.
          */
         Application INSTANCE_SEGMENTATION = new Application("cv/instance_segmentation");
+
+        /**
+         * An application that generates masks that identify a specific object or region of interest
+         * in a given image.
+         */
+        Application MASK_GENERATION = new Application("cv/mask_generation");
 
         /**
          * An application that accepts an image of a single person and returns the {@link
@@ -181,6 +258,21 @@ public class Application {
          * String}&gt;.
          */
         Application WORD_RECOGNITION = new Application("cv/word_recognition");
+
+        /**
+         * An application that accepts a seed and returns generated images.
+         *
+         * <p>The typical model returns an array of images {@link ai.djl.modality.cv.Image}[].
+         */
+        Application IMAGE_GENERATION = new Application("cv/image_generation");
+
+        /**
+         * An application that accepts an image and returns enhanced images.
+         *
+         * <p>The typical signature is Model&lt;{@link ai.djl.modality.cv.Image}, {@link
+         * ai.djl.modality.cv.Image}&gt;.
+         */
+        Application IMAGE_ENHANCEMENT = new Application("cv/image_enhancement");
     }
 
     /** The common set of applications for natural language processing (text data). */
@@ -188,6 +280,12 @@ public class Application {
 
         /** Any NLP application, including those in {@link NLP}. */
         Application ANY = new Application("nlp");
+
+        /**
+         * An application that masking some words in a sentence and predicting which words should
+         * replace those masks.
+         */
+        Application FILL_MASK = new Application("nlp/fill_mask");
 
         /**
          * An application that a reference document and a question about the document and returns
@@ -207,10 +305,22 @@ public class Application {
         Application TEXT_CLASSIFICATION = new Application("nlp/text_classification");
 
         /**
-         * An application that classifies text into positive or negative, an specific case of {@link
+         * An application that classifies text into positive or negative, a specific case of {@link
          * #TEXT_CLASSIFICATION}.
          */
         Application SENTIMENT_ANALYSIS = new Application("nlp/sentiment_analysis");
+
+        /**
+         * An application that classifies text into arbitrary label, a specific case of {@link
+         * #TEXT_CLASSIFICATION}.
+         */
+        Application ZERO_SHOT_CLASSIFICATION = new Application("nlp/zero_shot_classification");
+
+        /**
+         * A natural language understanding application that assigns a label to some tokens in a
+         * text.
+         */
+        Application TOKEN_CLASSIFICATION = new Application("nlp/token_classification");
 
         /**
          * An application that takes a word and returns a feature vector that represents the word.
@@ -223,6 +333,8 @@ public class Application {
          * ai.djl.ndarray.NDList}s instead of {@link ai.djl.ndarray.NDArray}.
          */
         Application WORD_EMBEDDING = new Application("nlp/word_embedding");
+
+        Application TEXT_GENERATION = new Application("nlp/text_generation");
 
         /**
          * An application that translates text from one language to another.
@@ -269,5 +381,22 @@ public class Application {
          *     chapter introducing this application</a>
          */
         Application SOFTMAX_REGRESSION = new Application("tabular/softmax_regression");
+    }
+
+    /** The common set of applications for audio data. */
+    public interface Audio {
+
+        /** Any audio application, including those in {@link Audio}. */
+        Application ANY = new Application("audio");
+    }
+
+    /** The common set of applications for timeseries extension. */
+    public interface TimeSeries {
+
+        /**
+         * An application that take a past target vector with corresponding feature and predicts a
+         * probability distribution based on it.
+         */
+        Application FORECASTING = new Application("timeseries/forecasting");
     }
 }

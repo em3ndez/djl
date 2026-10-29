@@ -12,24 +12,25 @@
  */
 package ai.djl.basicmodelzoo;
 
-import ai.djl.basicmodelzoo.cv.classification.MlpModelLoader;
-import ai.djl.basicmodelzoo.cv.classification.ResNetModelLoader;
-import ai.djl.basicmodelzoo.cv.object_detection.ssd.SsdModelLoader;
+import ai.djl.Application.CV;
+import ai.djl.repository.RemoteRepository;
 import ai.djl.repository.Repository;
 import ai.djl.repository.zoo.ModelZoo;
+
 import java.util.HashSet;
 import java.util.Set;
 
 /** Model Zoo is a repository that contains all models for DJL. */
-public class BasicModelZoo implements ModelZoo {
+public class BasicModelZoo extends ModelZoo {
 
-    private static final String REPO_URL = "https://mlrepo.djl.ai/";
-    private static final Repository REPOSITORY = Repository.newInstance("zoo", REPO_URL);
+    private static final Repository REPOSITORY = new RemoteRepository("zoo", DJL_REPO_URL);
     public static final String GROUP_ID = "ai.djl.zoo";
 
-    public static final ResNetModelLoader RESNET = new ResNetModelLoader(REPOSITORY);
-    public static final MlpModelLoader MLP = new MlpModelLoader(REPOSITORY);
-    public static final SsdModelLoader SSD = new SsdModelLoader(REPOSITORY);
+    BasicModelZoo() {
+        addModel(REPOSITORY.model(CV.IMAGE_CLASSIFICATION, GROUP_ID, "mlp", "0.0.3"));
+        addModel(REPOSITORY.model(CV.IMAGE_CLASSIFICATION, GROUP_ID, "resnet", "0.0.2"));
+        addModel(REPOSITORY.model(CV.OBJECT_DETECTION, GROUP_ID, "ssd", "0.0.2"));
+    }
 
     /** {@inheritDoc} */
     @Override
@@ -42,8 +43,8 @@ public class BasicModelZoo implements ModelZoo {
     public Set<String> getSupportedEngines() {
         Set<String> set = new HashSet<>();
         set.add("MXNet");
+        set.add("PyTorch");
         // TODO Currently WIP in supporting these two engines in the basic model zoo
-        //        set.add("PyTorch");
         //        set.add("TensorFlow");
         return set;
     }

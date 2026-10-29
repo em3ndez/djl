@@ -12,8 +12,14 @@
  */
 package ai.djl.modality.cv.output;
 
+import ai.djl.util.JsonSerializable;
+import ai.djl.util.JsonUtils;
+
+import com.google.gson.JsonObject;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.PriorityQueue;
 
 /**
  * A {@code Rectangle} specifies an area in a coordinate space that is enclosed by the {@code
@@ -24,10 +30,11 @@ import java.util.List;
  * if you have an image width of 400 pixels and the rectangle starts at 100 pixels, you would use
  * .25.
  */
-public class Rectangle implements BoundingBox {
+public class Rectangle implements BoundingBox, JsonSerializable {
 
     private static final long serialVersionUID = 1L;
 
+    @SuppressWarnings("serial")
     private List<Point> corners;
 
     private double width;
@@ -85,15 +92,26 @@ public class Rectangle implements BoundingBox {
     /** {@inheritDoc} */
     @Override
     public double getIoU(BoundingBox box) {
-        Rectangle rec = (Rectangle) box;
-        // caculate intesection lrtb
-        double left = Math.max(getX(), rec.getX());
-        double top = Math.min(getY(), rec.getY());
-        double right = Math.min(getX() + getWidth(), rec.getX() + rec.getWidth());
-        double bottom = Math.min(getY() + getHeight(), rec.getY() + rec.getHeight());
-        double intersection = (right - left) * (bottom - top);
-        return intersection
-                / (getWidth() * getHeight() + rec.getWidth() * rec.getHeight() - intersection);
+        Rectangle rect = box.getBounds();
+
+        // computing area of each rectangles
+        double s1 = (width + 1) * (height + 1);
+        double s2 = (rect.getWidth() + 1) * (rect.getHeight() + 1);
+        double sumArea = s1 + s2;
+
+        // find each edge of intersect rectangle
+        double left = Math.max(getX(), rect.getX());
+        double top = Math.max(getY(), rect.getY());
+        double right = Math.min(getX() + getWidth(), rect.getX() + rect.getWidth());
+        double bottom = Math.min(getY() + getHeight(), rect.getY() + rect.getHeight());
+
+        // judge if there is a intersect
+        if (left > right || top > bottom) {
+            return 0.0;
+        }
+
+        double intersect = (right - left + 1) * (bottom - top + 1);
+        return intersect / (sumArea - intersect);
     }
 
     /**
@@ -132,11 +150,105 @@ public class Rectangle implements BoundingBox {
         return height;
     }
 
+    /**
+     * Returns the upper left and bottom right coordinates.
+     *
+     * @return the upper left and bottom right coordinates
+     */
+    public double[] getCoordinates() {
+        Point upLeft = corners.get(0);
+        Point bottomRight = corners.get(2);
+        return new double[] {upLeft.getX(), upLeft.getY(), bottomRight.getX(), bottomRight.getY()};
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public JsonObject serialize() {
+        JsonObject ret = new JsonObject();
+        ret.add("rect", JsonUtils.GSON.toJsonTree(getCoordinates()));
+        return ret;
+    }
+
     /** {@inheritDoc} */
     @Override
     public String toString() {
-        double x = getX();
-        double y = getY();
-        return String.format("[x=%.3f, y=%.3f, width=%.3f, height=%.3f]", x, y, width, height);
+        return toJson();
+    }
+
+    /**
+     * Applies nms (non-maximum suppression) to the list of rectangles.
+     *
+     * @param boxes an list of {@code Rectangle}
+     * @param scores a list of scores
+     * @param nmsThreshold the nms threshold
+     * @return the filtered list with the index of the original list
+     */
+    public static List<Integer> nms(
+            List<Rectangle> boxes, List<Double> scores, float nmsThreshold) {
+        List<Integer> ret = new ArrayList<>();
+        PriorityQueue<Integer> pq =
+                new PriorityQueue<>(
+                        50,
+                        (lhs, rhs) -> {
+                            // Intentionally reversed to put high confidence at the head of the
+                            // queue.
+                            return Double.compare(scores.get(rhs), scores.get(lhs));
+                        });
+        for (int i = 0; i < boxes.size(); ++i) {
+            pq.add(i);
+        }
+
+        // do non maximum suppression
+        while (!pq.isEmpty()) {
+            // insert detection with max confidence
+            int[] detections = pq.stream().mapToInt(Integer::intValue).toArray();
+            ret.add(detections[0]);
+            Rectangle box = boxes.get(detections[0]);
+            pq.clear();
+            for (int i = 1; i < detections.length; i++) {
+                int detection = detections[i];
+                Rectangle location = boxes.get(detection);
+                if (box.boxIou(location) < nmsThreshold) {
+                    pq.add(detection);
+                }
+            }
+        }
+        return ret;
+    }
+
+    private double boxIou(Rectangle other) {
+        double intersection = intersection(other);
+        double union =
+                getWidth() * getHeight() + other.getWidth() * other.getHeight() - intersection;
+        return intersection / union;
+    }
+
+    private double intersection(Rectangle b) {
+        double w =
+                overlap(
+                        (getX() * 2 + getWidth()) / 2,
+                        getWidth(),
+                        (b.getX() * 2 + b.getWidth()) / 2,
+                        b.getWidth());
+        double h =
+                overlap(
+                        (getY() * 2 + getHeight()) / 2,
+                        getHeight(),
+                        (b.getY() * 2 + b.getHeight()) / 2,
+                        b.getHeight());
+        if (w < 0 || h < 0) {
+            return 0;
+        }
+        return w * h;
+    }
+
+    private double overlap(double x1, double w1, double x2, double w2) {
+        double l1 = x1 - w1 / 2;
+        double l2 = x2 - w2 / 2;
+        double left = Math.max(l1, l2);
+        double r1 = x1 + w1 / 2;
+        double r2 = x2 + w2 / 2;
+        double right = Math.min(r1, r2);
+        return right - left;
     }
 }

@@ -12,35 +12,38 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.MalformedModelException;
+import ai.djl.engine.Engine;
+import ai.djl.testing.TestRequirements;
 import ai.djl.training.TrainingResult;
 import ai.djl.translate.TranslateException;
-import java.io.IOException;
+
 import org.testng.Assert;
-import org.testng.SkipException;
 import org.testng.annotations.Test;
+
+import java.io.IOException;
 
 public class TrainPikachuTest {
 
     @Test
     public void testDetection() throws IOException, MalformedModelException, TranslateException {
-        // this is nightly test
-        if (!Boolean.getBoolean("nightly")) {
-            throw new SkipException("Nightly only");
-        }
+        TestRequirements.notArm();
+        TestRequirements.linux();
+        TestRequirements.nightly();
+
         String[] args;
         float expectedLoss = 0;
         int expectedMinNumber = 0;
         int expectedMaxNumber = 0;
-        if (Device.getGpuCount() > 0) {
-            args = new String[] {"-e", "20", "-b", "32", "-g", "1"};
+        // TODO: implement PyTorch multiBoxTarget or object detection training
+        if (Engine.getEngine("MXNet").getGpuCount() > 0) {
+            args = new String[] {"-e", "20", "-b", "32", "-g", "1", "--engine", "MXNet"};
             expectedLoss = 2.5e-3f;
             expectedMaxNumber = 15;
             expectedMinNumber = 6;
         } else {
             // test train 1 epoch and predict workflow works on CPU
-            args = new String[] {"-e", "1", "-m", "1", "-b", "32"};
+            args = new String[] {"-e", "1", "-m", "1", "-b", "32", "--engine", "MXNet"};
         }
         // test train
         TrainingResult result = TrainPikachu.runExample(args);

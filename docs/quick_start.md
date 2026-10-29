@@ -1,16 +1,16 @@
 # Quick start
 
 Deep Java Library (DJL) is designed to be easy to get started with and simple to use.
-The easiest way to learn DJL is to read the [beginner tutorial](../jupyter/tutorial/README.md) or
+The easiest way to learn DJL is to read the [beginner tutorial](https://docs.djl.ai/master/docs/demos/jupyter/tutorial/index.html) or
 our [examples](../examples/README.md).
 
 You can also view our 1.5 hour long (in 8 x ~10 minute segments) DJL 101 tutorial video series:
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/?list=PLC1JzXeHJitDmZBHupMGZE2zHzU8fEvfD&listType=playlist" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+[<img src="https://resources.djl.ai/images/djl-101.jpg" width="560" height="315">](https://www.youtube.com/embed/?list=PLC1JzXeHJitDmZBHupMGZE2zHzU8fEvfD&listType=playlist)
 
 ## Prerequisites
 
-* You need a Java Development Kit (JDK) installed on your system. We recommend using JDK 8, but any later version also works. For more information, see [Setup](development/setup.md).
+* You need a Java Development Kit (JDK) installed on your system. We recommend using JDK 11, but any later version also works. For more information, see [Setup](development/setup.md).
 * You need git installed on your system to clone the DJL repository.
 
 ## Try DJL
@@ -18,11 +18,9 @@ You can also view our 1.5 hour long (in 8 x ~10 minute segments) DJL 101 tutoria
 We developed several interactive toolkits for you to experience DJL.
 You can start from here to run inference online and download starter template with DJL.
 
-See [DJL Future Labs](interactive_tool.md)
-
 ## Beginner tutorial
 
-To get started, we recommend that you follow our short [beginner tutorial](../jupyter/tutorial/README.md). It takes you through some of the basics of deep learning to create a model, train your model, and run inference using your trained model.
+To get started, we recommend that you follow our short [beginner tutorial](https://docs.djl.ai/master/docs/demos/jupyter/tutorial/index.html). It takes you through some of the basics of deep learning to create a model, train your model, and run inference using your trained model.
 
 ## Run examples
 
@@ -33,10 +31,10 @@ All of our examples are executed by a simple command. For detailed command line 
 - [Train your first model](../examples/docs/train_mnist_mlp.md)
 - [Single-shot Object Detection inference example](../examples/docs/object_detection.md)
 - [More examples](https://github.com/deepjavalibrary/djl/tree/master/examples)
-- [Jupyter examples](../jupyter/README.md)
+- [Jupyter examples](https://docs.djl.ai/master/docs/demos/jupyter/index.html)
 
 ## Other resources
 
-- [JavaDoc API Reference](https://javadoc.djl.ai/)
+- [JavaDoc API Reference](https://djl.ai/website/javadoc.html)
 - [Contributor Documentation](development/README.md)
 - [FAQ](faq.md)

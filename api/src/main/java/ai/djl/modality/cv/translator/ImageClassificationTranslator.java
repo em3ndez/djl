@@ -13,12 +13,13 @@
 
 package ai.djl.modality.cv.translator;
 
-import ai.djl.Model;
 import ai.djl.modality.Classifications;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
-import ai.djl.ndarray.NDManager;
+import ai.djl.translate.ArgumentsUtil;
 import ai.djl.translate.TranslatorContext;
+import ai.djl.translate.TranslatorOptions;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,7 @@ public class ImageClassificationTranslator extends BaseImageTranslator<Classific
 
     private SynsetLoader synsetLoader;
     private boolean applySoftmax;
+    private int topK;
 
     private List<String> classes;
 
@@ -40,13 +42,14 @@ public class ImageClassificationTranslator extends BaseImageTranslator<Classific
         super(builder);
         this.synsetLoader = builder.synsetLoader;
         this.applySoftmax = builder.applySoftmax;
+        this.topK = builder.topK;
     }
 
     /** {@inheritDoc} */
     @Override
-    public void prepare(NDManager manager, Model model) throws IOException {
+    public void prepare(TranslatorContext ctx) throws IOException {
         if (classes == null) {
-            classes = synsetLoader.load(model);
+            classes = synsetLoader.load(ctx.getModel());
         }
     }
 
@@ -57,7 +60,13 @@ public class ImageClassificationTranslator extends BaseImageTranslator<Classific
         if (applySoftmax) {
             probabilitiesNd = probabilitiesNd.softmax(0);
         }
-        return new Classifications(classes, probabilitiesNd);
+        return new Classifications(classes, probabilitiesNd, topK);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public TranslatorOptions getExpansions() {
+        return new ImageClassificationTranslatorFactory().withTranslator(this);
     }
 
     /**
@@ -86,8 +95,20 @@ public class ImageClassificationTranslator extends BaseImageTranslator<Classific
     public static class Builder extends ClassificationBuilder<Builder> {
 
         private boolean applySoftmax;
+        private int topK = 5;
 
         Builder() {}
+
+        /**
+         * Set the topK number of classes to be displayed.
+         *
+         * @param topK the number of top classes to return
+         * @return the builder
+         */
+        public Builder optTopK(int topK) {
+            this.topK = topK;
+            return this;
+        }
 
         /**
          * Sets whether to apply softmax when processing output. Some models already include softmax
@@ -111,7 +132,8 @@ public class ImageClassificationTranslator extends BaseImageTranslator<Classific
         @Override
         protected void configPostProcess(Map<String, ?> arguments) {
             super.configPostProcess(arguments);
-            applySoftmax = getBooleanValue(arguments, "applySoftmax", false);
+            applySoftmax = ArgumentsUtil.booleanValue(arguments, "applySoftmax");
+            topK = ArgumentsUtil.intValue(arguments, "topK", 5);
         }
 
         /**

@@ -13,6 +13,7 @@
 package ai.djl.integration.tests.training;
 
 import ai.djl.Model;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -26,6 +27,7 @@ import ai.djl.training.Trainer;
 import ai.djl.training.TrainingConfig;
 import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
+
 import org.testng.annotations.Test;
 
 public class BlocksTest {
@@ -36,7 +38,7 @@ public class BlocksTest {
 
     @Test
     public void testFlattenBlock() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Blocks.batchFlattenBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {

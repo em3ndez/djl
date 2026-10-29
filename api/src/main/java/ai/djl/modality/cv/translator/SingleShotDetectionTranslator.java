@@ -18,6 +18,7 @@ import ai.djl.modality.cv.output.Rectangle;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.translate.TranslatorContext;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -58,13 +59,16 @@ public class SingleShotDetectionTranslator extends ObjectDetectionTranslator {
                 }
                 String className = classes.get(classId);
                 float[] box = boundingBoxes.get(i).toFloatArray();
-                // rescale box coordinates by imageWidth and imageHeight
-                double x = imageWidth > 0 ? box[0] / imageWidth : box[0];
-                double y = imageHeight > 0 ? box[1] / imageHeight : box[1];
-                double w = imageWidth > 0 ? box[2] / imageWidth - x : box[2] - x;
-                double h = imageHeight > 0 ? box[3] / imageHeight - y : box[3] - y;
-
-                Rectangle rect = new Rectangle(x, y, w, h);
+                double x = box[0];
+                double y = box[1];
+                double w = box[2] - x;
+                double h = box[3] - y;
+                Rectangle rect;
+                if (applyRatio) {
+                    rect = new Rectangle(x / width, y / height, w / width, h / height);
+                } else {
+                    rect = new Rectangle(x, y, w, h);
+                }
                 retNames.add(className);
                 retProbs.add(probability);
                 retBB.add(rect);

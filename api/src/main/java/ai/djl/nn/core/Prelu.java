@@ -21,6 +21,7 @@ import ai.djl.nn.AbstractBlock;
 import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 
@@ -40,6 +41,7 @@ public class Prelu extends AbstractBlock {
     private Parameter alpha;
 
     /** Creates a Parametric ReLU Block. */
+    @SuppressWarnings("this-escape")
     public Prelu() {
         super(VERSION);
         alpha =
@@ -71,12 +73,12 @@ public class Prelu extends AbstractBlock {
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
+    public void loadMetadata(byte loadVersion, DataInputStream is)
             throws IOException, MalformedModelException {
-        if (version == VERSION) {
+        if (loadVersion == version) {
             readInputShapes(is);
-        } else if (version != 1) {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
+        } else if (loadVersion != 1) {
+            throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
     }
 

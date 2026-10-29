@@ -2,7 +2,9 @@
 
 This folder contains examples and documentation for the Deep Java Library (DJL) project.
 
-## [JavaDoc API Reference](https://javadoc.djl.ai/)
+## [JavaDoc API Reference](https://djl.ai/website/javadoc.html)
+
+Note: when searching in JavaDoc, if your access is denied, please try removing the string `undefined` in the url.
 
 ## [Demos](https://djl.ai/website/demo.html)
 
@@ -18,14 +20,14 @@ This folder contains examples and documentation for the Deep Java Library (DJL) 
 - [Troubleshooting](development/troubleshooting.md)
 - [Inference Optimization](development/inference_performance_optimization.md)
 
-## [Jupyter notebook tutorials](../jupyter/README.md)
+## [Jupyter notebook tutorials](https://docs.djl.ai/master/docs/demos/jupyter/index.html)
 
-- **[Beginner Jupyter Tutorial](../jupyter/tutorial/README.md)**
-- [Run object detection with model zoo](../jupyter/object_detection_with_model_zoo.ipynb)
-- [Load pre-trained PyTorch model](../jupyter/load_pytorch_model.ipynb)
-- [Load pre-trained Apache MXNet model](../jupyter/load_mxnet_model.ipynb)
-- [Transfer learning example](../jupyter/transfer_learning_on_cifar10.ipynb)
-- [Question answering example](../jupyter/BERTQA.ipynb)
+- **[Beginner Jupyter Tutorial](https://docs.djl.ai/master/docs/demos/jupyter/tutorial/index.html)**
+- [Run object detection with model zoo](https://docs.djl.ai/master/docs/demos/jupyter/object_detection_with_model_zoo.html)
+- [Load pre-trained PyTorch model](https://docs.djl.ai/master/docs/demos/jupyter/load_pytorch_model.html)
+- [Load pre-trained Apache MXNet model](https://docs.djl.ai/master/docs/demos/jupyter/load_mxnet_model.html)
+- [Transfer learning example](https://docs.djl.ai/master/docs/demos/jupyter/transfer_learning_on_cifar10.html)
+- [Question answering example](https://docs.djl.ai/master/docs/demos/jupyter/BERTQA.html)
 
 ## [API Examples](../examples/README.md)
 
@@ -42,27 +44,36 @@ This folder contains examples and documentation for the Deep Java Library (DJL) 
 
 ## Engine Documentation
 
-### [Apache MXNet](../mxnet/README.md)
+### [Apache MXNet](../engines/mxnet/README.md)
 
 - [Apache MXNet Gluon Importing](mxnet/how_to_convert_your_model_to_symbol.md) - Apache MXNet Gluon Importing
 
-### [PyTorch](../pytorch/README.md)
+### [PyTorch](../engines/pytorch/README.md)
 
 - [PyTorch Importing](pytorch/how_to_convert_your_model_to_torchscript.md) - Import TorchScript model
 
-### [TensorFlow](../tensorflow/README.md)
+### [TensorFlow](../engines/tensorflow/README.md)
 
 - [TensorFlow Importing](tensorflow/how_to_import_tensorflow_models_in_DJL.md)
 
-### [ONNX Runtime](../onnxruntime/onnxruntime-engine/README.md)
+### [ONNX Runtime](../engines/onnxruntime/onnxruntime-engine/README.md)
 
-- [Hybrid Engine Operations](hybrid_engine.md) - Using a second Engine for supplemental API support
+- [Hybrid Engine Operations](hybrid_engine.md) - Using an alternative full Engine for supplemental API support
 
 ## Extensions and utilities
 
 - [Android support](../android/README.md)
+- [Audio support](../extensions/audio/README.md)
 - [AWS S3 support](../extensions/aws-ai/README.md)
+- [Google Cloud Storage support](../extensions/google-ai/README.md)
+- [NLP support with fastText](../extensions/fasttext/README.md)
 - [Hadoop support](../extensions/hadoop/README.md)
+- [Image support with OpenCV](../extensions/opencv/README.md)
+- [NLP support with SentencePiece](../extensions/sentencepiece/README.md)
+- [Spark Support](../extensions/spark/README.md)
+- [Tabular Dataset Support](../extensions/tablesaw/README.md)
+- [TimeSeries support](../extensions/timeseries/README.md)
+- [NLP support with Huggingface Tokenizers](../extensions/tokenizers/README.md)
 
 ## [Contributor Documentation](development/README.md)
 
@@ -70,5 +81,7 @@ This folder contains examples and documentation for the Deep Java Library (DJL) 
 - [Development guideline](development/development_guideline.md)
 
 ## [Roadmap](roadmap.md)
+
+## [Blogposts](blogposts.md)
 
 ## [FAQ](faq.md)

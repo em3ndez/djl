@@ -12,19 +12,16 @@
  */
 package ai.djl.modality.cv.translator;
 
-import ai.djl.Model;
 import ai.djl.modality.cv.Image;
 import ai.djl.modality.cv.output.BoundingBox;
 import ai.djl.modality.cv.output.DetectedObjects;
 import ai.djl.modality.cv.output.Mask;
-import ai.djl.modality.cv.util.NDImageUtils;
+import ai.djl.modality.cv.transform.ResizeShort;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
-import ai.djl.ndarray.NDManager;
-import ai.djl.ndarray.types.Shape;
-import ai.djl.translate.Pipeline;
-import ai.djl.translate.Transform;
+import ai.djl.translate.ArgumentsUtil;
 import ai.djl.translate.TranslatorContext;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,16 +31,10 @@ import java.util.Map;
  * A {@link BaseImageTranslator} that post-process the {@link NDArray} into {@link DetectedObjects}
  * with boundaries at the detailed pixel level.
  */
-public class InstanceSegmentationTranslator extends BaseImageTranslator<DetectedObjects>
-        implements Transform {
+public class InstanceSegmentationTranslator extends BaseImageTranslator<DetectedObjects> {
 
     private SynsetLoader synsetLoader;
     private float threshold;
-    private int shortEdge;
-    private int maxEdge;
-
-    private int rescaledWidth;
-    private int rescaledHeight;
 
     private List<String> classes;
 
@@ -56,37 +47,22 @@ public class InstanceSegmentationTranslator extends BaseImageTranslator<Detected
         super(builder);
         this.synsetLoader = builder.synsetLoader;
         this.threshold = builder.threshold;
-        this.shortEdge = builder.shortEdge;
-        this.maxEdge = builder.maxEdge;
     }
 
     /** {@inheritDoc} */
     @Override
-    public NDArray transform(NDArray array) {
-        return resizeShort(array);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public void prepare(NDManager manager, Model model) throws IOException {
+    public void prepare(TranslatorContext ctx) throws IOException {
         if (classes == null) {
-            classes = synsetLoader.load(model);
+            classes = synsetLoader.load(ctx.getModel());
         }
     }
 
     /** {@inheritDoc} */
     @Override
-    public NDList processInput(TranslatorContext ctx, Image image) {
-        Pipeline pipeline = getPipeline();
-        pipeline.insert(0, null, this);
-        ctx.setAttachment("originalHeight", image.getHeight());
-        ctx.setAttachment("originalWidth", image.getWidth());
-        return super.processInput(ctx, image);
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public DetectedObjects processOutput(TranslatorContext ctx, NDList list) {
+        int rescaledWidth = (Integer) ctx.getAttachment("processedWidth");
+        int rescaledHeight = (Integer) ctx.getAttachment("processedHeight");
+
         float[] ids = list.get(0).toFloatArray();
         float[] scores = list.get(1).toFloatArray();
         NDArray boundingBoxes = list.get(2);
@@ -110,19 +86,9 @@ public class InstanceSegmentationTranslator extends BaseImageTranslator<Detected
                 double w = box[2] / rescaledWidth - x;
                 double h = box[3] / rescaledHeight - y;
 
-                int maskW = (int) (w * (int) ctx.getAttachment("originalWidth"));
-                int maskH = (int) (h * (int) ctx.getAttachment("originalHeight"));
-
                 // Reshape mask to actual image bounding box shape.
                 NDArray array = masks.get(i);
-                Shape maskShape = array.getShape();
-                array = array.reshape(maskShape.addAll(new Shape(1)));
-                NDArray maskArray = NDImageUtils.resize(array, maskW, maskH).transpose();
-                float[] flattened = maskArray.toFloatArray();
-                float[][] maskFloat = new float[maskW][maskH];
-                for (int j = 0; j < maskW; j++) {
-                    System.arraycopy(flattened, j * maskH, maskFloat[j], 0, maskH);
-                }
+                float[][] maskFloat = Mask.toMask(array);
                 Mask mask = new Mask(x, y, w, h, maskFloat);
 
                 retNames.add(className);
@@ -131,28 +97,6 @@ public class InstanceSegmentationTranslator extends BaseImageTranslator<Detected
             }
         }
         return new DetectedObjects(retNames, retProbs, retBB);
-    }
-
-    /**
-     * Resizes the image based on the shorter edge or maximum edge length.
-     *
-     * @param image the input image
-     * @return the resized image
-     */
-    private NDArray resizeShort(NDArray image) {
-        Shape shape = image.getShape();
-        int width = (int) shape.get(1);
-        int height = (int) shape.get(0);
-        int min = Math.min(width, height);
-        int max = Math.max(width, height);
-        float scale = shortEdge / (float) min;
-        if (Math.round(scale * max) > maxEdge) {
-            scale = maxEdge / (float) max;
-        }
-        rescaledHeight = Math.round(height * scale);
-        rescaledWidth = Math.round(width * scale);
-
-        return NDImageUtils.resize(image, rescaledWidth, rescaledHeight);
     }
 
     /**
@@ -232,9 +176,9 @@ public class InstanceSegmentationTranslator extends BaseImageTranslator<Detected
         @Override
         protected void configPostProcess(Map<String, ?> arguments) {
             super.configPostProcess(arguments);
-            threshold = getFloatValue(arguments, "threshold", 0.3f);
-            shortEdge = getIntValue(arguments, "shortEdge", 600);
-            maxEdge = getIntValue(arguments, "maxEdge", 1000);
+            threshold = ArgumentsUtil.floatValue(arguments, "threshold", 0.3f);
+            shortEdge = ArgumentsUtil.intValue(arguments, "shortEdge", 600);
+            maxEdge = ArgumentsUtil.intValue(arguments, "maxEdge", 1000);
         }
 
         /**
@@ -244,6 +188,9 @@ public class InstanceSegmentationTranslator extends BaseImageTranslator<Detected
          */
         public InstanceSegmentationTranslator build() {
             validate();
+            ResizeShort resize = new ResizeShort(shortEdge, maxEdge, Image.Interpolation.BILINEAR);
+            pipeline.insert(0, null, resize);
+
             return new InstanceSegmentationTranslator(this);
         }
     }

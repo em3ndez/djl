@@ -25,24 +25,22 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.Trainer;
 import ai.djl.training.loss.SoftmaxCrossEntropyLoss;
-import java.io.IOException;
+
 import org.testng.Assert;
-import org.testng.SkipException;
 import org.testng.annotations.Test;
+
+import java.io.IOException;
 
 public class ImperativeModelZooTest {
 
     @Test
     public void testImperativeModelInputOutput()
             throws MalformedModelException, ModelNotFoundException, IOException {
-        // Test imperative models, only available in MXNet engine
-        if (!TestUtils.isMxnet()) {
-            throw new SkipException("Resnet50-cifar10 model only available in MXNet");
-        }
+        TestUtils.requiresEngine("MXNet"); // Resnet50-cifar10 model only available in MXNet
+
         // from model zoo
         Criteria<Image, Classifications> criteria =
                 Criteria.builder()
@@ -50,10 +48,11 @@ public class ImperativeModelZooTest {
                         .setTypes(Image.class, Classifications.class)
                         .optGroupId(BasicModelZoo.GROUP_ID)
                         .optArtifactId("resnet")
+                        .optEngine(TestUtils.getEngine())
                         .optFilter("layers", "50")
                         .optFilter("dataset", "cifar10")
                         .build();
-        try (Model model = ModelZoo.loadModel(criteria)) {
+        try (Model model = criteria.loadModel()) {
             Assert.assertEquals(model.describeInput().values().get(0), new Shape(1, 3, 32, 32));
             Assert.assertEquals(model.describeOutput().values().get(0), new Shape(1, 10));
         }
@@ -62,9 +61,10 @@ public class ImperativeModelZooTest {
                 Criteria.builder()
                         .optApplication(Application.CV.OBJECT_DETECTION)
                         .setTypes(Image.class, DetectedObjects.class)
+                        .optEngine(TestUtils.getEngine())
                         .optGroupId(BasicModelZoo.GROUP_ID)
                         .build();
-        try (Model model = ModelZoo.loadModel(ssdCriteria)) {
+        try (Model model = ssdCriteria.loadModel()) {
             Assert.assertEquals(model.describeInput().values().get(0), new Shape(32, 3, 256, 256));
             Assert.assertEquals(model.describeOutput().values().get(0), new Shape(1, 5444, 4));
             Assert.assertEquals(model.describeOutput().values().get(1), new Shape(32, 5444, 2));
@@ -73,7 +73,7 @@ public class ImperativeModelZooTest {
 
         // from builder
         Block alexNet = AlexNet.builder().build();
-        try (Model model = Model.newInstance("alexnet")) {
+        try (Model model = Model.newInstance("alexnet", TestUtils.getEngine())) {
             model.setBlock(alexNet);
             try (Trainer trainer =
                     model.newTrainer(new DefaultTrainingConfig(new SoftmaxCrossEntropyLoss()))) {

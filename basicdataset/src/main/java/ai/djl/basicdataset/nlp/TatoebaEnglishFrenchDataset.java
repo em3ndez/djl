@@ -18,9 +18,9 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
-import ai.djl.repository.Resource;
 import ai.djl.training.dataset.Record;
 import ai.djl.util.Progress;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -46,8 +46,7 @@ public class TatoebaEnglishFrenchDataset extends TextDataset {
     protected TatoebaEnglishFrenchDataset(Builder builder) {
         super(builder);
         this.usage = builder.usage;
-        MRL mrl = MRL.dataset(NLP.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, VERSION);
+        mrl = builder.getMrl();
     }
 
     /**
@@ -66,9 +65,9 @@ public class TatoebaEnglishFrenchDataset extends TextDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
-        Path root = resource.getRepository().getResourceDirectory(artifact);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
+        Path root = mrl.getRepository().getResourceDirectory(artifact);
 
         Path usagePath;
         switch (usage) {
@@ -138,6 +137,10 @@ public class TatoebaEnglishFrenchDataset extends TextDataset {
          */
         public TatoebaEnglishFrenchDataset build() {
             return new TatoebaEnglishFrenchDataset(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(NLP.ANY, groupId, artifactId, VERSION);
         }
     }
 }

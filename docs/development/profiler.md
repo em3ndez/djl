@@ -1,4 +1,4 @@
-## Profiler (Experimental)
+# Engine Profiler Support
 
 Currently, DJL supports experimental profilers for developers that 
 investigate the performance of operator execution as well as memory consumption.
@@ -11,7 +11,7 @@ In the future, we are considering to design a unified APIs and output unified fo
 
 By setting the following environment variable, it generates `profile.json` after executing the code.
 
-```
+```bash
 export MXNET_PROFILER_AUTOSTART=1
 ```
 
@@ -30,8 +30,8 @@ DJL have integrated PyTorch C++ profiler API and expose `JniUtils.startProfile` 
 Wrap the code snippet you want to profile in between `JniUtils.startProfile` and `JniUtils.stopProfile`.
 Here is an example.
 
-```
-try (ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria)) {
+```java
+try (ZooModel<Image, Classifications> model = criteria.loadModel()) {
     try (Predictor<Image, Classifications> predictor = model.newPredictor()) {
         Image image = ImageFactory.getInstance()
                         .fromNDArray(manager.zeros(new Shape(3, 224, 224), DataType.UINT8));
@@ -47,7 +47,7 @@ try (ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria)) {
 The output format is composed of operator execution record. 
 Each record contains `name`(operator name), `dur`(time duration), `shape`(input shapes), `cpu mem`(cpu memory footprint).
 
-```
+```json
 {
   "name": "aten::empty",
   "ph": "X",
@@ -60,3 +60,22 @@ Each record contains `name`(operator name), `dur`(time duration), `shape`(input 
   "args": {}
 }
 ```
+
+### OnnxRuntime
+
+When loading a model, the profiler can be enabled by specifying the desired filepath in the criteria:
+
+```java
+    Criteria<Image, Classifications> criteria =
+        Criteria.builder()
+            .optOption("profilerOutput", "build/testOrtProfiling")
+            ...
+            .build()
+```
+
+Following this, the file will appear at "build/testOrtProfiling_YYYY-MM-DD.json", relative to the
+working directory. A model's own `metadata.json` or `serving.properties` cannot set this option;
+only the application can, through `Criteria`.
+
+You can view it in a browser using a trace consumer like `chrome://tracing `.
+For more details, see the [OnnxRuntime Profiler Docs](https://onnxruntime.ai/docs/performance/tune-performance/profiling-tools.html).

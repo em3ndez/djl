@@ -19,16 +19,18 @@ import ai.djl.training.Trainer;
 import ai.djl.training.evaluator.Evaluator;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.util.ProgressBar;
-import java.util.ArrayList;
-import java.util.List;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * {@link TrainingListener} that outputs the progress of training each batch and epoch into logs.
  *
- * @see <a href="http://docs.djl.ai/docs/development/configure_logging.html">The guide on DJL
- *     logging</a>
+ * @see <a href="https://docs.djl.ai/master/docs/development/configure_logging.html">The guide on
+ *     DJL logging</a>
  */
 public class LoggingTrainingListener implements TrainingListener {
 
@@ -158,8 +160,9 @@ public class LoggingTrainingListener implements TrainingListener {
         logger.info("Training on: {}.", devicesMsg);
 
         long init = System.nanoTime();
-        String engineName = Engine.getInstance().getEngineName();
-        String version = Engine.getInstance().getVersion();
+        Engine engine = trainer.getManager().getEngine();
+        String engineName = engine.getEngineName();
+        String version = engine.getVersion();
         long loaded = System.nanoTime();
         logger.info(
                 String.format(

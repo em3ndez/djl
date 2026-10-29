@@ -20,25 +20,29 @@ import ai.djl.modality.cv.output.Mask;
 import ai.djl.modality.cv.output.Point;
 import ai.djl.modality.cv.output.Rectangle;
 import ai.djl.modality.cv.util.NDImageUtils;
+import ai.djl.ndarray.BaseNDManager;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.util.RandomUtils;
+
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferByte;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.stream.IntStream;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import javax.imageio.ImageIO;
 
 /** {@code BufferedImageFactory} is the default implementation of {@link ImageFactory}. */
@@ -57,16 +61,6 @@ public class BufferedImageFactory extends ImageFactory {
         BufferedImage image = ImageIO.read(path.toFile());
         if (image == null) {
             throw new IOException("Failed to read image from: " + path);
-        }
-        return new BufferedImageWrapper(image);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public Image fromUrl(URL url) throws IOException {
-        BufferedImage image = ImageIO.read(url);
-        if (image == null) {
-            throw new IOException("Failed to read image from: " + url);
         }
         return new BufferedImageWrapper(image);
     }
@@ -98,48 +92,50 @@ public class BufferedImageFactory extends ImageFactory {
             throw new UnsupportedOperationException("Batch is not supported");
         } else if (shape.get(0) == 1 || shape.get(2) == 1) {
             throw new UnsupportedOperationException("Grayscale image is not supported");
-        } else if (array.getDataType() != DataType.UINT8 && array.getDataType() != DataType.INT8) {
-            throw new IllegalArgumentException("Datatype should be INT8 or UINT8");
         }
+        int[] raw = array.toType(DataType.UINT8, false).toUint8Array();
         if (NDImageUtils.isCHW(shape)) {
             int height = (int) shape.get(1);
             int width = (int) shape.get(2);
-            int imageArea = width * height;
             BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-            int[] raw = array.toUint8Array();
-            IntStream.range(0, imageArea)
-                    .parallel()
-                    .forEach(
-                            ele -> {
-                                int x = ele % width;
-                                int y = ele / width;
-                                int red = raw[ele] & 0xFF;
-                                int green = raw[ele + imageArea] & 0xFF;
-                                int blue = raw[ele + imageArea * 2] & 0xFF;
-                                int rgb = (red << 16) | (green << 8) | blue;
-                                image.setRGB(x, y, rgb);
-                            });
-            return new BufferedImageWrapper(image);
-        } else {
-            int height = (int) shape.get(0);
-            int width = (int) shape.get(1);
-            int imageArea = width * height;
-            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-            int[] raw = array.toUint8Array();
-            IntStream.range(0, imageArea)
-                    .parallel()
-                    .forEach(
-                            ele -> {
-                                int x = ele % width;
-                                int y = ele / width;
-                                int red = raw[ele * 3] & 0xFF;
-                                int green = raw[ele * 3 + 1] & 0xFF;
-                                int blue = raw[ele * 3 + 2] & 0xFF;
-                                int rgb = (red << 16) | (green << 8) | blue;
-                                image.setRGB(x, y, rgb);
-                            });
+            int[] pixels = new int[width * height];
+            int imageArea = height * width;
+            for (int h = 0; h < height; ++h) {
+                for (int w = 0; w < width; ++w) {
+                    int index = h * width + w;
+                    int red = raw[index];
+                    int green = raw[imageArea + index];
+                    int blue = raw[imageArea * 2 + index];
+                    pixels[index] = (red << 16) | (green << 8) | blue;
+                }
+            }
+            image.setRGB(0, 0, width, height, pixels, 0, width);
             return new BufferedImageWrapper(image);
         }
+        int height = (int) shape.get(0);
+        int width = (int) shape.get(1);
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+        int[] pixels = new int[width * height];
+        for (int h = 0; h < height; ++h) {
+            for (int w = 0; w < width; ++w) {
+                int index = h * width + w;
+                int pos = index * 3;
+                int red = raw[pos];
+                int green = raw[pos + 1];
+                int blue = raw[pos + 2];
+                pixels[index] = (red << 16) | (green << 8) | blue;
+            }
+        }
+        image.setRGB(0, 0, width, height, pixels, 0, width);
+        return new BufferedImageWrapper(image);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Image fromPixels(int[] pixels, int width, int height) {
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, width, height, pixels, 0, width);
+        return new BufferedImageWrapper(image);
     }
 
     protected void save(BufferedImage image, OutputStream os, String type) throws IOException {
@@ -148,7 +144,7 @@ public class BufferedImageFactory extends ImageFactory {
 
     private class BufferedImageWrapper implements Image {
 
-        private final BufferedImage image;
+        private BufferedImage image;
 
         BufferedImageWrapper(BufferedImage image) {
             this.image = image;
@@ -168,25 +164,75 @@ public class BufferedImageFactory extends ImageFactory {
 
         /** {@inheritDoc} */
         @Override
-        public Object getWrappedImage() {
+        public BufferedImage getWrappedImage() {
             return image;
         }
 
         /** {@inheritDoc} */
         @Override
-        public Image getSubimage(int x, int y, int w, int h) {
+        public BufferedImageWrapper resize(int width, int height, boolean copy) {
+            if (!copy && image.getWidth() == width && image.getHeight() == height) {
+                return this;
+            }
+
+            java.awt.Image img =
+                    image.getScaledInstance(width, height, java.awt.Image.SCALE_SMOOTH);
+            BufferedImage scaled = new BufferedImage(width, height, image.getType());
+            Graphics2D g2d = scaled.createGraphics();
+            g2d.drawImage(img, 0, 0, null);
+            g2d.dispose();
+            return new BufferedImageWrapper(scaled);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public Image getSubImage(int x, int y, int w, int h) {
             return new BufferedImageWrapper(image.getSubimage(x, y, w, h));
         }
 
         /** {@inheritDoc} */
         @Override
-        public Image duplicate(Type type) {
+        public Image duplicate() {
+            BufferedImage copy =
+                    new BufferedImage(image.getWidth(), image.getHeight(), image.getType());
+            byte[] sourceData = ((DataBufferByte) image.getRaster().getDataBuffer()).getData();
+            byte[] biData = ((DataBufferByte) copy.getRaster().getDataBuffer()).getData();
+            System.arraycopy(sourceData, 0, biData, 0, sourceData.length);
+            return new BufferedImageWrapper(copy);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public Image getMask(int[][] mask) {
+            int w = mask[0].length;
+            int h = mask.length;
+            BufferedImageWrapper resized = resize(w, h, true);
+            BufferedImage img = resized.getWrappedImage();
+            int[] pixels = new int[w * h];
+            int index = 0;
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    if (mask[y][x] != 0) {
+                        pixels[index] = img.getRGB(x, y);
+                    }
+                    index++;
+                }
+            }
+            return fromPixels(pixels, w, h);
+        }
+
+        private void convertIdNeeded() {
+            if (image.getType() == BufferedImage.TYPE_INT_ARGB) {
+                return;
+            }
+
             BufferedImage newImage =
-                    new BufferedImage(image.getWidth(), image.getHeight(), getType(type));
+                    new BufferedImage(
+                            image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = newImage.createGraphics();
             g.drawImage(image, 0, 0, null);
             g.dispose();
-            return new BufferedImageWrapper(newImage);
+            image = newImage;
         }
 
         /** {@inheritDoc} */
@@ -201,7 +247,8 @@ public class BufferedImageFactory extends ImageFactory {
                 channel = 3;
             }
 
-            ByteBuffer bb = manager.allocateDirect(channel * height * width);
+            int size = BaseNDManager.toBufferSize((long) channel * height * width, DataType.UINT8);
+            ByteBuffer bb = manager.allocateDirect(size);
             if (image.getType() == BufferedImage.TYPE_BYTE_GRAY) {
                 int[] data = new int[width * height];
                 image.getData().getPixels(0, 0, width, height, data);
@@ -222,7 +269,7 @@ public class BufferedImageFactory extends ImageFactory {
                     int blue = rgb & 0xFF;
 
                     if (flag == Flag.GRAYSCALE) {
-                        int gray = (red + green + blue) / 3;
+                        int gray = Math.round(0.299f * red + 0.587f * green + 0.114f * blue);
                         bb.put((byte) gray);
                     } else {
                         bb.put((byte) red);
@@ -243,7 +290,17 @@ public class BufferedImageFactory extends ImageFactory {
 
         /** {@inheritDoc} */
         @Override
-        public void drawBoundingBoxes(DetectedObjects detections) {
+        public List<BoundingBox> findBoundingBoxes() {
+            // TODO: Add grayscale conversion and use BoundFinder to implement
+            throw new UnsupportedOperationException("Not supported for BufferedImage");
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public void drawBoundingBoxes(DetectedObjects detections, float opacity) {
+            // Make image copy with alpha channel because original image was jpg
+            convertIdNeeded();
+
             Graphics2D g = (Graphics2D) image.getGraphics();
             int stroke = 2;
             g.setStroke(new BasicStroke(stroke));
@@ -253,26 +310,35 @@ public class BufferedImageFactory extends ImageFactory {
             int imageHeight = image.getHeight();
 
             List<DetectedObjects.DetectedObject> list = detections.items();
+            int k = 10;
+            Map<String, Integer> classNumberTable = new ConcurrentHashMap<>();
             for (DetectedObjects.DetectedObject result : list) {
                 String className = result.getClassName();
                 BoundingBox box = result.getBoundingBox();
-                g.setPaint(randomColor().darker());
+                if (classNumberTable.containsKey(className)) {
+                    g.setPaint(new Color(classNumberTable.get(className)));
+                } else {
+                    g.setPaint(new Color(k));
+                    classNumberTable.put(className, k);
+                    k = (k + 100) % 255;
+                }
 
-                Rectangle rectangle = box.getBounds();
-                int x = (int) (rectangle.getX() * imageWidth);
-                int y = (int) (rectangle.getY() * imageHeight);
-                g.drawRect(
-                        x,
-                        y,
-                        (int) (rectangle.getWidth() * imageWidth),
-                        (int) (rectangle.getHeight() * imageHeight));
-                drawText(g, className, x, y, stroke, 4);
+                if (!className.isEmpty()) {
+                    Rectangle rectangle = box.getBounds();
+                    int x = (int) (rectangle.getX() * imageWidth);
+                    int y = (int) (rectangle.getY() * imageHeight);
+                    g.drawRect(
+                            x,
+                            y,
+                            (int) (rectangle.getWidth() * imageWidth),
+                            (int) (rectangle.getHeight() * imageHeight));
+                    drawText(g, className, x, y, stroke, 4);
+                }
                 // If we have a mask instead of a plain rectangle, draw tha mask
                 if (box instanceof Mask) {
-                    Mask mask = (Mask) box;
-                    drawMask(image, mask);
+                    drawMask((Mask) box, opacity);
                 } else if (box instanceof Landmark) {
-                    drawLandmarks(image, box);
+                    drawLandmarks(box);
                 }
             }
             g.dispose();
@@ -280,32 +346,95 @@ public class BufferedImageFactory extends ImageFactory {
 
         /** {@inheritDoc} */
         @Override
-        public void drawJoints(Joints joints) {
+        public void drawRectangle(Rectangle rect, int rgb, int thickness) {
             Graphics2D g = (Graphics2D) image.getGraphics();
-            int stroke = 2;
-            g.setStroke(new BasicStroke(stroke));
+            g.setStroke(new BasicStroke(thickness));
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setPaint(new Color(rgb));
+            int x = (int) rect.getX();
+            int y = (int) rect.getY();
+            g.drawRect(x, y, (int) rect.getWidth(), (int) rect.getHeight());
+        }
 
-            int imageWidth = image.getWidth();
-            int imageHeight = image.getHeight();
-
-            for (Joints.Joint joint : joints.getJoints()) {
-                g.setPaint(randomColor().darker());
-                int x = (int) (joint.getX() * imageWidth);
-                int y = (int) (joint.getY() * imageHeight);
-                g.fillOval(x, y, 10, 10);
+        /** {@inheritDoc} */
+        @Override
+        public void drawMarks(List<Point> points, int radius) {
+            Graphics2D g = (Graphics2D) image.getGraphics();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(new Color(246, 96, 0));
+            for (Point point : points) {
+                int[][] star = createStar(point, radius);
+                g.fillPolygon(star[0], star[1], 10);
             }
             g.dispose();
         }
 
-        private int getType(Type type) {
-            if (type == Type.TYPE_INT_ARGB) {
-                return BufferedImage.TYPE_INT_ARGB;
+        /** {@inheritDoc} */
+        @Override
+        public void drawJoints(Joints joints) {
+            // Make image copy with alpha channel because original image was jpg
+            convertIdNeeded();
+
+            Graphics2D g = (Graphics2D) image.getGraphics();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            int imageWidth = image.getWidth();
+            int imageHeight = image.getHeight();
+
+            List<Joints.Joint> list = joints.getJoints();
+            if (list.size() == 17) {
+                g.setColor(new Color(224, 255, 37));
+                g.setStroke(new BasicStroke(3));
+                drawLine(g, list.get(5), list.get(7), imageWidth, imageHeight);
+                drawLine(g, list.get(7), list.get(9), imageWidth, imageHeight);
+                drawLine(g, list.get(6), list.get(8), imageWidth, imageHeight);
+                drawLine(g, list.get(8), list.get(10), imageWidth, imageHeight);
+                drawLine(g, list.get(11), list.get(13), imageWidth, imageHeight);
+                drawLine(g, list.get(12), list.get(14), imageWidth, imageHeight);
+                drawLine(g, list.get(13), list.get(15), imageWidth, imageHeight);
+                drawLine(g, list.get(14), list.get(16), imageWidth, imageHeight);
+                drawLine(g, list.get(5), list.get(6), imageWidth, imageHeight);
+                drawLine(g, list.get(11), list.get(12), imageWidth, imageHeight);
+                drawLine(g, list.get(5), list.get(11), imageWidth, imageHeight);
+                drawLine(g, list.get(6), list.get(12), imageWidth, imageHeight);
             }
-            throw new IllegalArgumentException("the type is not supported!");
+
+            g.setColor(new Color(37, 150, 190));
+            g.setStroke(new BasicStroke(2));
+            for (Joints.Joint joint : list) {
+                int x = (int) (joint.getX() * imageWidth);
+                int y = (int) (joint.getY() * imageHeight);
+                g.fillOval(x - 6, y - 6, 12, 12);
+            }
+
+            g.dispose();
         }
 
-        private Color randomColor() {
-            return new Color(RandomUtils.nextInt(255));
+        /** {@inheritDoc} */
+        @Override
+        public void drawImage(Image overlay, boolean resize) {
+            if (!(overlay.getWrappedImage() instanceof BufferedImage)) {
+                throw new IllegalArgumentException("Only BufferedImage allowed");
+            }
+            if (resize) {
+                overlay = overlay.resize(getWidth(), getHeight(), false);
+            }
+            BufferedImage target =
+                    new BufferedImage(getWidth(), getHeight(), BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = (Graphics2D) target.getGraphics();
+            g.drawImage(image, 0, 0, null);
+            g.drawImage((BufferedImage) overlay.getWrappedImage(), 0, 0, null);
+            g.dispose();
+            image = target;
+        }
+
+        private void drawLine(
+                Graphics2D g, Joints.Joint from, Joints.Joint to, int width, int height) {
+            int x0 = (int) (from.getX() * width);
+            int y0 = (int) (from.getY() * height);
+            int x1 = (int) (to.getX() * width);
+            int y1 = (int) (to.getY() * height);
+            g.drawLine(x0, y0, x1, y1);
         }
 
         private void drawText(Graphics2D g, String text, int x, int y, int stroke, int padding) {
@@ -321,44 +450,57 @@ public class BufferedImageFactory extends ImageFactory {
             g.drawString(text, x + padding, y + ascent);
         }
 
-        private void drawMask(BufferedImage image, Mask mask) {
+        private void drawMask(Mask mask, float ratio) {
             float r = RandomUtils.nextFloat();
             float g = RandomUtils.nextFloat();
             float b = RandomUtils.nextFloat();
             int imageWidth = image.getWidth();
             int imageHeight = image.getHeight();
-            int x = (int) (mask.getX() * imageWidth);
-            int y = (int) (mask.getY() * imageHeight);
-            float[][] probDist = mask.getProbDist();
-            // Correct some coordinates of box when going out of image
-            if (x < 0) {
-                x = 0;
+            int x = 0;
+            int y = 0;
+            int w = imageWidth;
+            int h = imageHeight;
+            if (!mask.isFullImageMask()) {
+                x = (int) (mask.getX() * imageWidth);
+                y = (int) (mask.getY() * imageHeight);
+                w = (int) (mask.getWidth() * imageWidth);
+                h = (int) (mask.getHeight() * imageHeight);
+                // Correct some coordinates of box when going out of image
+                if (x < 0) {
+                    x = 0;
+                }
+                if (y < 0) {
+                    y = 0;
+                }
             }
-            if (y < 0) {
-                y = 0;
+            float[][] probDist = mask.getProbDist();
+            if (ratio < 0 || ratio > 1) {
+                float max = 0;
+                for (float[] row : probDist) {
+                    for (float f : row) {
+                        max = Math.max(max, f);
+                    }
+                }
+                ratio = 0.5f / max;
             }
 
             BufferedImage maskImage =
                     new BufferedImage(
-                            probDist.length, probDist[0].length, BufferedImage.TYPE_INT_ARGB);
-            for (int xCor = 0; xCor < probDist.length; xCor++) {
-                for (int yCor = 0; yCor < probDist[xCor].length; yCor++) {
-                    float opacity = probDist[xCor][yCor];
-                    if (opacity < 0.1) {
-                        opacity = 0f;
-                    }
-                    if (opacity > 0.8) {
-                        opacity = 0.8f;
-                    }
+                            probDist[0].length, probDist.length, BufferedImage.TYPE_INT_ARGB);
+            for (int yCor = 0; yCor < probDist.length; yCor++) {
+                for (int xCor = 0; xCor < probDist[0].length; xCor++) {
+                    float opacity = probDist[yCor][xCor] * ratio;
                     maskImage.setRGB(xCor, yCor, new Color(r, g, b, opacity).darker().getRGB());
                 }
             }
+            java.awt.Image scaled = maskImage.getScaledInstance(w, h, java.awt.Image.SCALE_SMOOTH);
+
             Graphics2D gR = (Graphics2D) image.getGraphics();
-            gR.drawImage(maskImage, x, y, null);
+            gR.drawImage(scaled, x, y, null);
             gR.dispose();
         }
 
-        private void drawLandmarks(BufferedImage image, BoundingBox box) {
+        private void drawLandmarks(BoundingBox box) {
             Graphics2D g = (Graphics2D) image.getGraphics();
             g.setColor(new Color(246, 96, 0));
             BasicStroke bStroke = new BasicStroke(4, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER);

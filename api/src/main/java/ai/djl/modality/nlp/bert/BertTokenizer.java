@@ -13,6 +13,7 @@
 package ai.djl.modality.nlp.bert;
 
 import ai.djl.modality.nlp.preprocess.SimpleTokenizer;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
@@ -41,6 +42,16 @@ public class BertTokenizer extends SimpleTokenizer {
         }
 
         return ret;
+    }
+
+    /**
+     * Returns a string presentation of the tokens.
+     *
+     * @param tokens a list of tokens
+     * @return a string presentation of the tokens
+     */
+    public String tokenToString(List<String> tokens) {
+        return String.join(" ", tokens);
     }
 
     /**

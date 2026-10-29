@@ -13,16 +13,30 @@
 package ai.djl.ndarray;
 
 import ai.djl.Device;
+import ai.djl.engine.Engine;
+import ai.djl.engine.StandardCapabilities;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.util.PairList;
-import java.nio.Buffer;
-import java.nio.file.Path;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
+import ai.djl.util.RandomUtils;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
+import java.nio.LongBuffer;
+import java.nio.ShortBuffer;
+import java.nio.charset.Charset;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /** {@code BaseNDManager} is the default implementation of {@link NDManager}. */
 public abstract class BaseNDManager implements NDManager {
@@ -30,37 +44,50 @@ public abstract class BaseNDManager implements NDManager {
     private static final Logger logger = LoggerFactory.getLogger(BaseNDManager.class);
 
     protected NDManager parent;
+    protected NDManager alternativeManager;
     protected String uid;
     protected String name;
     protected Device device;
     protected ConcurrentHashMap<String, AutoCloseable> resources;
     protected ConcurrentHashMap<String, TempResource> tempResources;
     protected AtomicBoolean closed = new AtomicBoolean(false);
+    protected AtomicBoolean capped = new AtomicBoolean(false);
 
+    @SuppressWarnings("this-escape")
     protected BaseNDManager(NDManager parent, Device device) {
         this.parent = parent;
-        this.device = Device.defaultIfNull(device, getEngine());
+        this.device = device == null ? defaultDevice() : device;
         resources = new ConcurrentHashMap<>();
         tempResources = new ConcurrentHashMap<>();
-        uid = UUID.randomUUID().toString();
+        uid = NDManager.nextUid();
+        Engine engine = getEngine().getAlternativeEngine();
+        if (engine != null) {
+            // Use the same device if possible for efficiency
+            if (this.device.isGpu() && engine.hasCapability(StandardCapabilities.CUDA)) {
+                alternativeManager = engine.newBaseManager(this.device);
+            } else {
+                // Use the default device
+                alternativeManager = engine.newBaseManager();
+            }
+        }
     }
 
     /** {@inheritDoc} */
     @Override
-    public NDArray create(String data) {
-        throw new UnsupportedOperationException("Not supported!");
+    public final Device defaultDevice() {
+        return getEngine().defaultDevice();
     }
 
     /** {@inheritDoc} */
     @Override
-    public NDArray create(String[] data) {
+    public NDArray create(String[] data, Charset charset, Shape shape) {
         throw new UnsupportedOperationException("Not supported!");
     }
 
     /** {@inheritDoc} */
     @Override
     public NDArray create(Shape shape, DataType dataType) {
-        throw new UnsupportedOperationException("Not supported!");
+        return zeros(shape, dataType);
     }
 
     /** {@inheritDoc} */
@@ -101,18 +128,6 @@ public abstract class BaseNDManager implements NDManager {
 
     /** {@inheritDoc} */
     @Override
-    public NDArray zeros(Shape shape, DataType dataType) {
-        throw new UnsupportedOperationException("Not supported!");
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public NDArray ones(Shape shape, DataType dataType) {
-        throw new UnsupportedOperationException("Not supported!");
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public NDArray full(Shape shape, float value, DataType dataType) {
         throw new UnsupportedOperationException("Not supported!");
     }
@@ -143,6 +158,12 @@ public abstract class BaseNDManager implements NDManager {
 
     /** {@inheritDoc} */
     @Override
+    public NDArray randomPermutation(long n) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public NDArray randomUniform(float low, float high, Shape shape, DataType dataType) {
         throw new UnsupportedOperationException("Not supported!");
     }
@@ -151,6 +172,25 @@ public abstract class BaseNDManager implements NDManager {
     @Override
     public NDArray randomNormal(float loc, float scale, Shape shape, DataType dataType) {
         throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray truncatedNormal(float loc, float scale, Shape shape, DataType dataType) {
+        // Fail closed rather than silently truncating an element count beyond int range.
+        int sampleSize = Math.toIntExact(shape.size());
+        double[] dist = new double[sampleSize];
+
+        for (int i = 0; i < sampleSize; i++) {
+            double sample = RandomUtils.nextGaussian();
+            while (sample < -2 || sample > 2) {
+                sample = RandomUtils.nextGaussian();
+            }
+
+            dist[i] = sample;
+        }
+
+        return create(dist).muli(scale).addi(loc).reshape(shape).toType(dataType, false);
     }
 
     /** {@inheritDoc} */
@@ -167,8 +207,50 @@ public abstract class BaseNDManager implements NDManager {
 
     /** {@inheritDoc} */
     @Override
+    public NDArray sampleNormal(NDArray mu, NDArray sigma) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray sampleNormal(NDArray mu, NDArray sigma, Shape shape) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray samplePoisson(NDArray lam) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray samplePoisson(NDArray lam, Shape shape) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray sampleGamma(NDArray alpha, NDArray beta) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public NDArray sampleGamma(NDArray alpha, NDArray beta, Shape shape) {
+        throw new UnsupportedOperationException("Not supported!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public boolean isOpen() {
         return !closed.get();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void cap() {
+        this.capped.set(true);
     }
 
     /** {@inheritDoc} */
@@ -191,6 +273,30 @@ public abstract class BaseNDManager implements NDManager {
 
     /** {@inheritDoc} */
     @Override
+    public List<NDArray> getManagedArrays() {
+        return Stream.concat(
+                        // Main resources
+                        resources.values().stream()
+                                .flatMap(
+                                        r -> {
+                                            if (r instanceof NDResource) {
+                                                return ((NDResource) r)
+                                                        .getResourceNDArrays().stream();
+                                            } else if (r instanceof NDManager) {
+                                                return ((NDManager) r).getManagedArrays().stream();
+                                            } else {
+                                                return Stream.empty();
+                                            }
+                                        }),
+
+                        // Temp resouces
+                        tempResources.values().stream()
+                                .flatMap(tr -> tr.resource.getResourceNDArrays().stream()))
+                .collect(Collectors.toList());
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public String toString() {
         String parentName = parent == null ? "No Parent" : parent.getName();
         return "Name: "
@@ -205,7 +311,19 @@ public abstract class BaseNDManager implements NDManager {
 
     /** {@inheritDoc} */
     @Override
-    public synchronized void attachInternal(String resourceId, AutoCloseable resource) {
+    public synchronized void attachInternal(String resourceId, AutoCloseable... resources) {
+        if (capped.get()) {
+            throw new IllegalStateException("NDManager is capped for addition of resources.");
+        }
+        for (int i = 0; i < resources.length; i++) {
+            attachUncappedInternal(
+                    resources.length == 1 ? resourceId : resourceId + "_" + i, resources[i]);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public synchronized void attachUncappedInternal(String resourceId, AutoCloseable resource) {
         if (closed.get()) {
             throw new IllegalStateException("NDManager has been closed already.");
         }
@@ -231,6 +349,10 @@ public abstract class BaseNDManager implements NDManager {
     @Override
     public void tempAttachInternal(
             NDManager originalManager, String resourceId, NDResource resource) {
+        if (this instanceof SystemNDManager) {
+            throw new IllegalStateException(
+                    "System manager cannot be temp attached because it can't be closed..");
+        }
         if (closed.get()) {
             throw new IllegalStateException("NDManager has been closed already.");
         }
@@ -269,6 +391,11 @@ public abstract class BaseNDManager implements NDManager {
     /** {@inheritDoc} */
     @Override
     public void close() {
+        if (this instanceof SystemNDManager) {
+            throw new IllegalStateException(
+                    "The SystemNDManager can not be closed. It is global and lives for the duration"
+                            + " of the process");
+        }
         if (!closed.getAndSet(true)) {
             for (AutoCloseable closeable : resources.values()) {
                 try {
@@ -278,13 +405,7 @@ public abstract class BaseNDManager implements NDManager {
                 }
             }
             for (TempResource resource : tempResources.values()) {
-                try {
-                    if (!resource.detached) {
-                        resource.resource.attach(resource.manager);
-                    }
-                } catch (Exception e) {
-                    logger.error("Temporary resource return failed.", e);
-                }
+                resource.returnResource();
             }
             parent.detachInternal(uid);
             resources.clear();
@@ -303,11 +424,11 @@ public abstract class BaseNDManager implements NDManager {
             sb.append("    ");
         }
         sb.append("\\--- NDManager(")
-                .append(uid.substring(24))
+                .append(uid)
                 .append(") resource count: ")
                 .append(resources.size());
 
-        System.out.println(sb.toString()); // NOPMD
+        System.out.println(sb); // NOPMD
         for (AutoCloseable c : resources.values()) {
             if (c instanceof BaseNDManager) {
                 ((BaseNDManager) c).debugDump(level + 1);
@@ -315,7 +436,113 @@ public abstract class BaseNDManager implements NDManager {
         }
     }
 
+    NDManager getAlternativeManager() {
+        return alternativeManager;
+    }
+
+    /**
+     * Checks if the input buffer size is match expected data type.
+     *
+     * @param buffer the input buffer
+     * @param dataType the desired {@code DataType}
+     * @param expected the expected size
+     * @throws IllegalArgumentException if buffer size is invalid
+     */
+    public static void validateBuffer(Buffer buffer, DataType dataType, int expected) {
+        boolean isByteBuffer = buffer instanceof ByteBuffer;
+        DataType type = DataType.fromBuffer(buffer);
+        if (!isCompatible(type, dataType) && !isByteBuffer) {
+            // It's ok if type != datatype and buffer is ByteBuffer,
+            // since buffer will be copied into ByteBuffer
+            throw new IllegalArgumentException(
+                    "The input data type: "
+                            + type
+                            + " does not match target array data type: "
+                            + dataType);
+        }
+
+        int remaining = buffer.remaining();
+        int expectedSize = isByteBuffer ? toBufferSize(expected, dataType) : expected;
+        if (remaining < expectedSize) {
+            throw new IllegalArgumentException(
+                    "The NDArray size is: " + expected + ", but buffer size is: " + remaining);
+        }
+        if (remaining > expectedSize) {
+            logger.warn(
+                    "Input buffer size is greater than the NDArray size, please set limit"
+                            + " explicitly.");
+            buffer.limit(expectedSize);
+        }
+    }
+
+    /**
+     * Returns the number of bytes required to store the given number of elements.
+     *
+     * @param elements the number of elements
+     * @param dataType the {@code DataType} of the elements
+     * @return the number of bytes
+     * @throws IllegalArgumentException if the number of elements is negative
+     * @throws ArithmeticException if the number of bytes does not fit in an int
+     */
+    public static int toBufferSize(long elements, DataType dataType) {
+        if (elements < 0) {
+            throw new IllegalArgumentException("Invalid number of elements: " + elements);
+        }
+        return Math.toIntExact(Math.multiplyExact(elements, dataType.getNumOfBytes()));
+    }
+
+    private static boolean isCompatible(DataType type1, DataType type2) {
+        if (type1.getNumOfBytes() != type2.getNumOfBytes()) {
+            return false;
+        }
+        if (type1.getNumOfBytes() == 2) {
+            // fp16, bf16, int16, uint16 all uses ShortBuffer
+            return true;
+        }
+        if (type1.getFormat() == type2.getFormat()) {
+            return true;
+        }
+        return type1.isInteger() && type2.isInteger();
+    }
+
+    /**
+     * Copies data from the source {@code Buffer} to the target {@code ByteBuffer}.
+     *
+     * @param src the source {@code Buffer}
+     * @param target the target {@code ByteBuffer}
+     */
+    public static void copyBuffer(Buffer src, ByteBuffer target) {
+        target.rewind();
+        DataType inputType = DataType.fromBuffer(src);
+        switch (inputType) {
+            case FLOAT16:
+                target.asShortBuffer().put((ShortBuffer) src);
+                break;
+            case FLOAT32:
+                target.asFloatBuffer().put((FloatBuffer) src);
+                break;
+            case FLOAT64:
+                target.asDoubleBuffer().put((DoubleBuffer) src);
+                break;
+            case UINT8:
+            case INT8:
+            case BOOLEAN:
+                target.put((ByteBuffer) src);
+                break;
+            case INT32:
+                target.asIntBuffer().put((IntBuffer) src);
+                break;
+            case INT64:
+                target.asLongBuffer().put((LongBuffer) src);
+                break;
+            default:
+                throw new AssertionError("Unsupported datatype: " + inputType);
+        }
+        target.rewind();
+    }
+
     protected static final class TempResource {
+
         private NDResource resource;
         private NDManager manager;
         private boolean detached;
@@ -324,6 +551,20 @@ public abstract class BaseNDManager implements NDManager {
             this.resource = resource;
             this.manager = manager;
             this.detached = false;
+        }
+
+        public void returnResource() {
+            try {
+                if (!detached) {
+                    if (manager.isOpen()) {
+                        resource.returnResource(manager);
+                    } else {
+                        resource.close();
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Temporary resource return failed.", e);
+            }
         }
     }
 }

@@ -13,51 +13,63 @@
 package ai.djl.integration.util;
 
 import ai.djl.Device;
-import ai.djl.TrainingDivergedException;
 import ai.djl.engine.Engine;
 import ai.djl.engine.StandardCapabilities;
-import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.types.Shape;
-import ai.djl.testing.Assertions;
-import org.testng.Assert;
 
+import org.testng.SkipException;
+
+import java.util.Arrays;
+
+@SuppressWarnings("PMD.TestClassWithoutTestCases")
 public final class TestUtils {
 
+    private static String engineName = Engine.getDefaultEngineName();
+
     private TestUtils() {}
+
+    public static void setEngine(String engineName) {
+        TestUtils.engineName = engineName;
+    }
+
+    public static String getEngine() {
+        return engineName;
+    }
 
     public static boolean isWindows() {
         return System.getProperty("os.name").startsWith("Win");
     }
 
-    public static boolean isMxnet() {
-        Engine engine = Engine.getInstance();
-        return "MXNet".equals(engine.getEngineName());
-    }
-
-    public static boolean isEngine(String name) {
-        Engine engine = Engine.getInstance();
-        return name.equals(engine.getEngineName());
-    }
-
-    public static void verifyNDArrayValues(
-            NDArray array, Shape expectedShape, float sum, float mean, float max, float min) {
-        if (array.isNaN().any().getBoolean()) {
-            throw new TrainingDivergedException("There are NANs in this array");
+    public static void requiresEngine(String... engines) {
+        for (String e : engines) {
+            if (engineName.equals(e)) {
+                return;
+            }
         }
-        Assert.assertEquals(array.getShape(), expectedShape);
-        Assertions.assertAlmostEquals(array.sum().getFloat(), sum);
-        Assertions.assertAlmostEquals(array.mean().getFloat(), mean);
-        Assertions.assertAlmostEquals(array.max().getFloat(), max);
-        Assertions.assertAlmostEquals(array.min().getFloat(), min);
+        throw new SkipException(
+                "This test requires one of the engines: " + Arrays.toString(engines));
     }
 
-    public static Device[] getDevices() {
-        if (!Engine.getInstance().hasCapability(StandardCapabilities.CUDNN)
-                && TestUtils.isMxnet()) {
+    /**
+     * Requires a test have any engines except for those listed.
+     *
+     * @param engines the engine(s) to not run the test on
+     */
+    public static void requiresNotEngine(String... engines) {
+        for (String e : engines) {
+            if (engineName.equals(e)) {
+                throw new SkipException(
+                        "This test requires not using the engines: " + Arrays.toString(engines));
+            }
+        }
+    }
+
+    public static Device[] getDevices(int maxGpus) {
+        Engine engine = Engine.getEngine(engineName);
+        if (!engine.hasCapability(StandardCapabilities.CUDNN) && "MXNet".equals(engineName)) {
             return new Device[] {
                 Device.cpu()
             }; // TODO: RNN is not implemented on MXNet without cuDNN
         }
-        return Device.getDevices(1);
+        return engine.getDevices(maxGpus);
     }
 }

@@ -20,18 +20,26 @@ import ai.djl.training.GradientCollector;
 import ai.djl.training.LocalParameterServer;
 import ai.djl.training.ParameterServer;
 import ai.djl.training.optimizer.Optimizer;
+import ai.djl.util.Ec2Utils;
+import ai.djl.util.RandomUtils;
 import ai.djl.util.Utils;
 import ai.djl.util.cuda.CudaUtils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.management.MemoryUsage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.regex.Pattern;
 
 /**
  * The {@code Engine} interface is the base of the provided implementation for DJL.
@@ -40,10 +48,10 @@ import org.slf4j.LoggerFactory;
  * contain methods to detect information about the usable machine hardware and to create a new
  * {@link NDManager} and {@link Model}.
  *
- * @see <a href="http://docs.djl.ai/docs/engine.html">Engine Guide</a>
+ * @see <a href="https://docs.djl.ai/master/docs/engine.html">Engine Guide</a>
  * @see EngineProvider
- * @see <a href="http://docs.djl.ai/docs/development/cache_management.html">The guide on resource
- *     and engine caching</a>
+ * @see <a href="https://docs.djl.ai/master/docs/development/cache_management.html">The guide on
+ *     resource and engine caching</a>
  */
 public abstract class Engine {
 
@@ -52,6 +60,8 @@ public abstract class Engine {
     private static final Map<String, EngineProvider> ALL_ENGINES = new ConcurrentHashMap<>();
 
     private static final String DEFAULT_ENGINE = initEngine();
+    private static final Pattern PATTERN =
+            Pattern.compile("KEY|TOKEN|PASSWORD", Pattern.CASE_INSENSITIVE);
 
     private Device defaultDevice;
 
@@ -61,8 +71,7 @@ public abstract class Engine {
     private static synchronized String initEngine() {
         ServiceLoader<EngineProvider> loaders = ServiceLoader.load(EngineProvider.class);
         for (EngineProvider provider : loaders) {
-            logger.debug("Found EngineProvider: {}", provider.getEngineName());
-            ALL_ENGINES.put(provider.getEngineName(), provider);
+            registerEngine(provider);
         }
 
         if (ALL_ENGINES.isEmpty()) {
@@ -70,11 +79,16 @@ public abstract class Engine {
             return null;
         }
 
-        String defaultEngine = System.getenv("DJL_DEFAULT_ENGINE");
-        defaultEngine = System.getProperty("ai.djl.default_engine", defaultEngine);
+        String def = System.getProperty("ai.djl.default_engine");
+        String defaultEngine = Utils.getenv("DJL_DEFAULT_ENGINE", def);
+        boolean aarch64 = "aarch64".equals(System.getProperty("os.arch"));
         if (defaultEngine == null || defaultEngine.isEmpty()) {
             int rank = Integer.MAX_VALUE;
             for (EngineProvider provider : ALL_ENGINES.values()) {
+                if (aarch64 && "MXNet".equals(provider.getEngineName())) {
+                    // exclude MXNet on aarch64 machine
+                    continue;
+                }
                 if (provider.getEngineRank() < rank) {
                     defaultEngine = provider.getEngineName();
                     rank = provider.getEngineRank();
@@ -84,8 +98,16 @@ public abstract class Engine {
             throw new EngineException("Unknown default engine: " + defaultEngine);
         }
         logger.debug("Found default engine: {}", defaultEngine);
+        Ec2Utils.callHome(defaultEngine);
         return defaultEngine;
     }
+
+    /**
+     * Returns the alternative {@code engine} if available.
+     *
+     * @return the alternative {@code engine}
+     */
+    public abstract Engine getAlternativeEngine();
 
     /**
      * Returns the name of the Engine.
@@ -102,6 +124,15 @@ public abstract class Engine {
     public abstract int getRank();
 
     /**
+     * Returns the default Engine name.
+     *
+     * @return the default Engine name
+     */
+    public static String getDefaultEngineName() {
+        return System.getProperty("ai.djl.default_engine", DEFAULT_ENGINE);
+    }
+
+    /**
      * Returns the default Engine.
      *
      * @return the instance of {@code Engine}
@@ -112,9 +143,11 @@ public abstract class Engine {
             throw new EngineException(
                     "No deep learning engine found."
                             + System.lineSeparator()
-                            + "Please refer to https://github.com/deepjavalibrary/djl/blob/master/docs/development/troubleshooting.md for more details.");
+                            + "Please refer to"
+                            + " https://github.com/deepjavalibrary/djl/blob/master/docs/development/troubleshooting.md"
+                            + " for more details.");
         }
-        return getEngine(System.getProperty("ai.djl.default_engine", DEFAULT_ENGINE));
+        return getEngine(getDefaultEngineName());
     }
 
     /**
@@ -126,6 +159,16 @@ public abstract class Engine {
      */
     public static boolean hasEngine(String engineName) {
         return ALL_ENGINES.containsKey(engineName);
+    }
+
+    /**
+     * Registers a {@link EngineProvider} if not registered.
+     *
+     * @param provider the {@code EngineProvider} to be registered
+     */
+    public static void registerEngine(EngineProvider provider) {
+        logger.debug("Registering EngineProvider: {}", provider.getEngineName());
+        ALL_ENGINES.putIfAbsent(provider.getEngineName(), provider);
     }
 
     /**
@@ -184,12 +227,62 @@ public abstract class Engine {
     }
 
     /**
+     * Returns an array of devices.
+     *
+     * <p>If GPUs are available, it will return an array of {@code Device} of size
+     * \(min(numAvailable, maxGpus)\). Else, it will return an array with a single CPU device.
+     *
+     * @return an array of devices
+     */
+    public Device[] getDevices() {
+        return getDevices(Integer.MAX_VALUE);
+    }
+
+    /**
+     * Returns an array of devices given the maximum number of GPUs to use.
+     *
+     * <p>If GPUs are available, it will return an array of {@code Device} of size
+     * \(min(numAvailable, maxGpus)\). Else, it will return an array with a single CPU device.
+     *
+     * @param maxGpus the max number of GPUs to use. Use 0 for no GPUs.
+     * @return an array of devices
+     */
+    public Device[] getDevices(int maxGpus) {
+        int count = getGpuCount();
+        if (maxGpus <= 0 || count <= 0) {
+            return new Device[] {Device.cpu()};
+        }
+
+        count = Math.min(maxGpus, count);
+
+        Device[] devices = new Device[count];
+        for (int i = 0; i < count; ++i) {
+            devices[i] = Device.gpu(i);
+        }
+        return devices;
+    }
+
+    /**
+     * Returns the number of GPUs available in the system.
+     *
+     * @return the number of GPUs available in the system
+     */
+    public int getGpuCount() {
+        if (hasCapability(StandardCapabilities.CUDA)) {
+            return CudaUtils.getGpuCount();
+        }
+        return 0;
+    }
+
+    /**
      * Construct an empty SymbolBlock for loading.
      *
      * @param manager the manager to manage parameters
      * @return Empty {@link SymbolBlock} for static graph
      */
-    public abstract SymbolBlock newSymbolBlock(NDManager manager);
+    public SymbolBlock newSymbolBlock(NDManager manager) {
+        throw new UnsupportedOperationException("Not supported.");
+    }
 
     /**
      * Constructs a new model.
@@ -222,7 +315,9 @@ public abstract class Engine {
      *
      * @return a new instance of {@link GradientCollector}
      */
-    public abstract GradientCollector newGradientCollector();
+    public GradientCollector newGradientCollector() {
+        throw new UnsupportedOperationException("Not supported.");
+    }
 
     /**
      * Returns a new instance of {@link ParameterServer}.
@@ -244,6 +339,7 @@ public abstract class Engine {
      */
     public void setRandomSeed(int seed) {
         this.seed = seed;
+        RandomUtils.RANDOM.setSeed(seed);
     }
 
     /**
@@ -255,15 +351,40 @@ public abstract class Engine {
         return seed;
     }
 
+    /**
+     * Returns the DJL API version.
+     *
+     * @return seed the seed to be fixed in Engine
+     */
+    public static String getDjlVersion() {
+        String version = Engine.class.getPackage().getSpecificationVersion();
+        if (version != null) {
+            return version;
+        }
+        try (InputStream is = Engine.class.getResourceAsStream("api.properties")) {
+            Properties prop = new Properties();
+            prop.load(is);
+            return prop.getProperty("djl_version");
+        } catch (IOException e) {
+            throw new AssertionError("Failed to open api.properties", e);
+        }
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public String toString() {
+        return getEngineName() + ':' + getVersion();
+    }
+
     /** Prints debug information about the environment for debugging environment issues. */
     @SuppressWarnings("PMD.SystemPrintln")
     public static void debugEnvironment() {
         System.out.println("----------- System Properties -----------");
-        System.getProperties().forEach((k, v) -> System.out.println(k + ": " + v));
+        System.getProperties().forEach((k, v) -> print((String) k, v));
 
         System.out.println();
         System.out.println("--------- Environment Variables ---------");
-        System.getenv().forEach((k, v) -> System.out.println(k + ": " + v));
+        Utils.getenv().forEach(Engine::print);
 
         System.out.println();
         System.out.println("-------------- Directories --------------");
@@ -288,9 +409,8 @@ public abstract class Engine {
 
         System.out.println();
         System.out.println("------------------ CUDA -----------------");
-        int gpuCount = Device.getGpuCount();
+        int gpuCount = CudaUtils.getGpuCount();
         System.out.println("GPU Count: " + gpuCount);
-        System.out.println("Default Device: " + Device.defaultDevice());
         if (gpuCount > 0) {
             System.out.println("CUDA: " + CudaUtils.getCudaVersionString());
             System.out.println("ARCH: " + CudaUtils.getComputeCapability(0));
@@ -303,14 +423,18 @@ public abstract class Engine {
 
         System.out.println();
         System.out.println("----------------- Engines ---------------");
-        System.out.println("Default Engine: " + DEFAULT_ENGINE);
+        System.out.println("DJL version: " + getDjlVersion());
+        System.out.println("Default Engine: " + Engine.getInstance());
+        System.out.println("Default Device: " + Engine.getInstance().defaultDevice());
         for (EngineProvider provider : ALL_ENGINES.values()) {
             System.out.println(provider.getEngineName() + ": " + provider.getEngineRank());
-            try {
-                provider.getEngine();
-            } catch (EngineException e) {
-                e.printStackTrace(System.out);
-            }
         }
+    }
+
+    private static void print(String key, Object value) {
+        if (PATTERN.matcher(key).find()) {
+            value = "*********";
+        }
+        System.out.println(key + ": " + value); // NOPMD
     }
 }

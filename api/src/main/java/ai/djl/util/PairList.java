@@ -14,10 +14,11 @@ package ai.djl.util;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Objects;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -69,7 +70,7 @@ public class PairList<K, V> implements Iterable<Pair<K, V>> {
      *
      * @param list the list containing elements to be placed into this PairList
      */
-    public PairList(List<Pair<K, V>> list) {
+    public PairList(List<? extends Pair<K, V>> list) {
         this(list.size());
         for (Pair<K, V> pair : list) {
             keys.add(pair.getKey());
@@ -181,6 +182,18 @@ public class PairList<K, V> implements Iterable<Pair<K, V>> {
     }
 
     /**
+     * Returns the index of the first occurrence of the specified element in this list, or -1 if
+     * this list does not contain the element.
+     *
+     * @param key – element to search for
+     * @return the index of the first occurrence of the specified element in this list, or -1 if
+     *     this list does not contain the element
+     */
+    public int indexOf(K key) {
+        return keys.indexOf(key);
+    }
+
+    /**
      * Returns the key at the specified position in this list.
      *
      * @param index the index of the element to return
@@ -246,6 +259,12 @@ public class PairList<K, V> implements Iterable<Pair<K, V>> {
      */
     public V[] valueArray(V[] target) {
         return values.toArray(target);
+    }
+
+    /** Removes all the elements from this pair list. */
+    public void clear() {
+        keys.clear();
+        values.clear();
     }
 
     /**
@@ -350,13 +369,32 @@ public class PairList<K, V> implements Iterable<Pair<K, V>> {
      */
     public Map<K, V> toMap(boolean checkDuplicate) {
         int size = keys.size();
-        Map<K, V> map = new ConcurrentHashMap<>(size * 3 / 2);
+        Map<K, V> map = new LinkedHashMap<>(size * 3 / 2); // NOPMD
         for (int i = 0; i < size; ++i) {
             if (map.put(keys.get(i), values.get(i)) != null && checkDuplicate) {
                 throw new IllegalStateException("Duplicate keys: " + keys.get(i));
             }
         }
         return map;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        PairList<?, ?> pairList = (PairList<?, ?>) o;
+        return keys.equals(pairList.keys) && values.equals(pairList.values);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public int hashCode() {
+        return Objects.hash(keys, values);
     }
 
     /** Internal Iterator implementation. */

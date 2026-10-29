@@ -1,15 +1,12 @@
 buildscript {
 
     repositories {
-        maven {
-            url "https://mlrepo.djl.ai/maven/"
-        }
         google()
-        jcenter()
+        mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.6.3'
+        classpath 'com.android.tools.build:gradle:8.5.1'
     }
 }
 
@@ -20,10 +17,16 @@ allprojects {
 
     repositories {
         google()
-        jcenter()
+        mavenCentral()
+        mavenLocal()
+        maven {
+            url "https://central.sonatype.com/repository/maven-snapshots/"
+        }
     }
+
+    apply from: file("${rootProject.projectDir}/../tools/gradle/android-formatter.gradle")
 }
 
-task clean(type: Delete) {
+tasks.register('clean', Delete) {
     delete rootProject.buildDir
 }

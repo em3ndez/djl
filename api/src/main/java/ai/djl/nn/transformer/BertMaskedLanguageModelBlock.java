@@ -23,6 +23,7 @@ import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.BatchNorm;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.util.Arrays;
 import java.util.function.Function;
 
@@ -45,6 +46,7 @@ public class BertMaskedLanguageModelBlock extends AbstractBlock {
      * @param bertBlock the bert block to create the task for
      * @param hiddenActivation the activation to use for the hidden layer
      */
+    @SuppressWarnings("this-escape")
     public BertMaskedLanguageModelBlock(
             BertBlock bertBlock, Function<NDArray, NDArray> hiddenActivation) {
         super(VERSION);
@@ -91,11 +93,11 @@ public class BertMaskedLanguageModelBlock extends AbstractBlock {
         // The following adds the sequence offsets to every index for every sequence.
         // This works, because the single values in the sequence offsets are propagated
         NDArray absoluteIndices =
-                indices.add(sequenceOffsets).reshape(1, batchSize * indicesPerSequence);
+                indices.add(sequenceOffsets).reshape(1, (long) batchSize * indicesPerSequence);
         // Now we create one long sequence by appending all sequences
-        NDArray flattenedSequences = sequences.reshape(batchSize * sequenceLength, width);
+        NDArray flattenedSequences = sequences.reshape((long) batchSize * sequenceLength, width);
         // We use the absolute indices to gather the elements of the flattened sequences
-        return MissingOps.gatherNd(flattenedSequences, absoluteIndices);
+        return flattenedSequences.gatherNd(absoluteIndices);
     }
 
     /** {@inheritDoc} */
@@ -114,7 +116,7 @@ public class BertMaskedLanguageModelBlock extends AbstractBlock {
         NDArray sequenceOutput = inputs.get(0); // (B, S, E)
         NDArray maskedIndices = inputs.get(1); // (B, I)
         NDArray embeddingTable = inputs.get(2); // (D, E)
-        try (NDManager scope = NDManager.from(sequenceOutput)) {
+        try (NDManager scope = NDManager.subManagerOf(sequenceOutput)) {
             scope.tempAttachAll(sequenceOutput, maskedIndices);
             NDArray gatheredTokens = gatherFromIndices(sequenceOutput, maskedIndices); // (B * I, E)
             NDArray projectedTokens =
@@ -148,6 +150,6 @@ public class BertMaskedLanguageModelBlock extends AbstractBlock {
         int batchSize = (int) inputShapes[0].get(0);
         int indexCount = (int) inputShapes[1].get(1);
         int dictionarySize = (int) inputShapes[2].get(0);
-        return new Shape[] {new Shape(batchSize * indexCount, dictionarySize)};
+        return new Shape[] {new Shape((long) batchSize * indexCount, dictionarySize)};
     }
 }

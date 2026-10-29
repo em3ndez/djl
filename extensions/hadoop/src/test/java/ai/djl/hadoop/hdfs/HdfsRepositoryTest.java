@@ -16,22 +16,24 @@ import ai.djl.Application;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
+import ai.djl.testing.TestRequirements;
 import ai.djl.util.Utils;
 import ai.djl.util.ZipUtils;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.List;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.testng.Assert;
-import org.testng.SkipException;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.List;
 
 public class HdfsRepositoryTest {
 
@@ -39,9 +41,7 @@ public class HdfsRepositoryTest {
 
     @BeforeClass
     public void setup() throws IOException {
-        if (System.getProperty("os.name").startsWith("Win")) {
-            throw new SkipException("MiniDFSCluster doesn't wupport windows.");
-        }
+        TestRequirements.notWindows(); // MiniDFSCluster doesn't wupport windows.
 
         System.setProperty("DJL_CACHE_DIR", "build/cache");
         String userHome = System.getProperty("user.home");
@@ -64,7 +64,8 @@ public class HdfsRepositoryTest {
 
         Configuration config = new Configuration();
         setFilePermission(config);
-        miniDfs = new MiniDFSCluster(config, 1, true, null);
+        MiniDFSCluster.Builder builder = new MiniDFSCluster.Builder(config);
+        miniDfs = builder.numDataNodes(1).format(true).build();
         miniDfs.waitClusterUp();
         FileSystem fs = miniDfs.getFileSystem();
         fs.copyFromLocalFile(new Path(zipFile.toString()), new Path("/mlp.zip"));
@@ -86,7 +87,7 @@ public class HdfsRepositoryTest {
         List<MRL> list = repo.getResources();
         Assert.assertFalse(list.isEmpty());
 
-        Artifact artifact = repo.resolve(list.get(0), "1.0", null);
+        Artifact artifact = repo.resolve(list.get(0), null);
         repo.prepare(artifact);
     }
 
@@ -97,7 +98,7 @@ public class HdfsRepositoryTest {
         List<MRL> list = repo.getResources();
         Assert.assertFalse(list.isEmpty());
 
-        Artifact artifact = repo.resolve(list.get(0), "1.0", null);
+        Artifact artifact = repo.resolve(list.get(0), null);
         repo.prepare(artifact);
 
         Assert.assertTrue(repo.isRemote());
@@ -118,14 +119,15 @@ public class HdfsRepositoryTest {
         List<MRL> list = repo.getResources();
         Assert.assertTrue(list.isEmpty());
 
-        MRL mrl = MRL.model(Application.UNDEFINED, "ai.djl.localmodelzoo", "mlp");
-        Artifact artifact = repo.resolve(mrl, "0.0.1", null);
+        MRL mrl = repo.model(Application.UNDEFINED, "ai.djl.localmodelzoo", "mlp");
+        Artifact artifact = repo.resolve(mrl, null);
         Assert.assertNull(artifact);
     }
 
     private void setFilePermission(Configuration config) {
         try {
-            Process process = Runtime.getRuntime().exec("/bin/sh -c umask");
+            String[] cmd = {"/bin/sh", "-c", "umask"};
+            Process process = Runtime.getRuntime().exec(cmd);
             int rc = process.waitFor();
             if (rc != 0) {
                 return;

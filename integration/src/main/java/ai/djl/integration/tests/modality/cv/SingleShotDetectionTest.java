@@ -13,6 +13,7 @@
 package ai.djl.integration.tests.modality.cv;
 
 import ai.djl.basicmodelzoo.cv.object_detection.ssd.SingleShotDetection;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
@@ -20,11 +21,13 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.training.ParameterStore;
+
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import org.testng.Assert;
-import org.testng.annotations.Test;
 
 public class SingleShotDetectionTest {
 
@@ -62,7 +65,7 @@ public class SingleShotDetectionTest {
 
     @Test
     public void testSingleShotDetectionShape() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             int[] numFilters = {16, 32, 64};
             SequentialBlock block = new SequentialBlock();
             for (int numFilter : numFilters) {

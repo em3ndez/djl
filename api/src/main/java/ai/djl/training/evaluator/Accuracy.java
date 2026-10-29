@@ -25,36 +25,34 @@ public class Accuracy extends AbstractAccuracy {
      * index.
      */
     public Accuracy() {
-        this("Accuracy", 0, 1);
+        this("Accuracy", 1);
     }
 
     /**
-     * Creates a multiclass accuracy evaluator that computes accuracy across axis 1 along given
+     * Creates a multiclass accuracy evaluator that computes accuracy across axis 1 along the 0th
      * index.
      *
      * @param name the name of the evaluator, default is "Accuracy"
-     * @param index the index of the NDArray in labels to compute accuracy for
      */
-    public Accuracy(String name, int index) {
-        super(name, index);
+    public Accuracy(String name) {
+        this(name, 1);
     }
 
     /**
      * Creates a multiclass accuracy evaluator.
      *
      * @param name the name of the evaluator, default is "Accuracy"
-     * @param index the index of the NDArray in labels to compute accuracy for
      * @param axis the axis that represent classes in prediction, default 1
      */
-    public Accuracy(String name, int index, int axis) {
-        super(name, index, axis);
+    public Accuracy(String name, int axis) {
+        super(name, axis);
     }
 
     /** {@inheritDoc} */
     @Override
     protected Pair<Long, NDArray> accuracyHelper(NDList labels, NDList predictions) {
-        NDArray label = labels.get(index);
-        NDArray prediction = predictions.get(index);
+        NDArray label = labels.head();
+        NDArray prediction = predictions.head();
         checkLabelShapes(label, prediction);
         NDArray predictionReduced;
         if (!label.getShape().equals(prediction.getShape())) {
@@ -63,7 +61,8 @@ public class Accuracy extends AbstractAccuracy {
             predictionReduced = predictionReduced.reshape(label.getShape());
         } else {
             // Multi-class, one-hot label
-            predictionReduced = prediction;
+            predictionReduced = prediction.argMax(axis);
+            label = label.argMax(axis);
         }
         // result of sum is int64 now
         long total = label.size();

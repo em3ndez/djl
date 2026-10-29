@@ -15,17 +15,24 @@ package ai.djl.modality.cv.translator;
 import ai.djl.Model;
 import ai.djl.modality.cv.Image;
 import ai.djl.modality.cv.transform.CenterCrop;
+import ai.djl.modality.cv.transform.CenterFit;
 import ai.djl.modality.cv.transform.Normalize;
+import ai.djl.modality.cv.transform.Pad;
 import ai.djl.modality.cv.transform.Resize;
+import ai.djl.modality.cv.transform.ResizeShort;
 import ai.djl.modality.cv.transform.ToTensor;
+import ai.djl.modality.cv.util.NDImageUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
+import ai.djl.ndarray.types.Shape;
+import ai.djl.translate.ArgumentsUtil;
 import ai.djl.translate.Batchifier;
 import ai.djl.translate.Pipeline;
 import ai.djl.translate.Transform;
 import ai.djl.translate.Translator;
 import ai.djl.translate.TranslatorContext;
 import ai.djl.util.Utils;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.MalformedURLException;
@@ -44,9 +51,12 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
     private static final float[] MEAN = {0.485f, 0.456f, 0.406f};
     private static final float[] STD = {0.229f, 0.224f, 0.225f};
 
+    protected Pipeline pipeline;
+
     private Image.Flag flag;
-    private Pipeline pipeline;
     private Batchifier batchifier;
+    protected int width;
+    protected int height;
 
     /**
      * Constructs an ImageTranslator with the provided builder.
@@ -57,6 +67,8 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
         flag = builder.flag;
         pipeline = builder.pipeline;
         batchifier = builder.batchifier;
+        width = builder.width;
+        height = builder.height;
     }
 
     /** {@inheritDoc} */
@@ -67,53 +79,25 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
 
     /** {@inheritDoc} */
     @Override
-    public Pipeline getPipeline() {
-        return pipeline;
-    }
-
-    /**
-     * Processes the {@link Image} input and converts it to NDList.
-     *
-     * @param ctx the toolkit that helps create the input NDArray
-     * @param input the {@link Image} input
-     * @return a {@link NDList}
-     */
-    @Override
     public NDList processInput(TranslatorContext ctx, Image input) {
         NDArray array = input.toNDArray(ctx.getNDManager(), flag);
-        return pipeline.transform(new NDList(array));
-    }
-
-    protected static String getStringValue(Map<String, ?> arguments, String key, String def) {
-        Object value = arguments.get(key);
-        if (value == null) {
-            return def;
+        NDList list = pipeline.transform(new NDList(array));
+        Shape shape = list.get(0).getShape();
+        int processedWidth;
+        int processedHeight;
+        long[] dim = shape.getShape();
+        if (NDImageUtils.isCHW(shape)) {
+            processedWidth = (int) dim[dim.length - 1];
+            processedHeight = (int) dim[dim.length - 2];
+        } else {
+            processedWidth = (int) dim[dim.length - 2];
+            processedHeight = (int) dim[dim.length - 3];
         }
-        return value.toString();
-    }
-
-    protected static int getIntValue(Map<String, ?> arguments, String key, int def) {
-        Object value = arguments.get(key);
-        if (value == null) {
-            return def;
-        }
-        return (int) Double.parseDouble(value.toString());
-    }
-
-    protected static float getFloatValue(Map<String, ?> arguments, String key, float def) {
-        Object value = arguments.get(key);
-        if (value == null) {
-            return def;
-        }
-        return (float) Double.parseDouble(value.toString());
-    }
-
-    protected static boolean getBooleanValue(Map<String, ?> arguments, String key, boolean def) {
-        Object value = arguments.get(key);
-        if (value == null) {
-            return def;
-        }
-        return Boolean.parseBoolean(value.toString());
+        ctx.setAttachment("width", input.getWidth());
+        ctx.setAttachment("height", input.getHeight());
+        ctx.setAttachment("processedWidth", processedWidth);
+        ctx.setAttachment("processedHeight", processedHeight);
+        return list;
     }
 
     /**
@@ -154,6 +138,19 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
         }
 
         /**
+         * Sets the image size.
+         *
+         * @param width the image width
+         * @param height the image height
+         * @return this builder
+         */
+        public T setImageSize(int width, int height) {
+            this.width = width;
+            this.height = height;
+            return self();
+        }
+
+        /**
          * Adds the {@link Transform} to the {@link Pipeline} use for pre-processing the image.
          *
          * @param transform the {@link Transform} to be added
@@ -190,21 +187,70 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
             if (pipeline == null) {
                 pipeline = new Pipeline();
             }
-            width = getIntValue(arguments, "width", 224);
-            height = getIntValue(arguments, "height", 224);
+            width = ArgumentsUtil.intValue(arguments, "width", 224);
+            height = ArgumentsUtil.intValue(arguments, "height", 224);
             if (arguments.containsKey("flag")) {
                 flag = Image.Flag.valueOf(arguments.get("flag").toString());
             }
-            if (getBooleanValue(arguments, "centerCrop", false)) {
-                addTransform(new CenterCrop());
+            String pad = ArgumentsUtil.stringValue(arguments, "pad", "false");
+            if ("true".equals(pad)) {
+                addTransform(new Pad(0));
+            } else if (!"false".equals(pad)) {
+                double padding = Double.parseDouble(pad);
+                addTransform(new Pad(padding));
             }
-            if (getBooleanValue(arguments, "resize", false)) {
+
+            String resize = ArgumentsUtil.stringValue(arguments, "resize", "false");
+            if ("true".equals(resize)) {
                 addTransform(new Resize(width, height));
+            } else if (!"false".equals(resize)) {
+                String[] tokens = resize.split("\\s*,\\s*");
+                int w = (int) Double.parseDouble(tokens[0]);
+                int h;
+                Image.Interpolation interpolation;
+                if (tokens.length > 1) {
+                    h = (int) Double.parseDouble(tokens[1]);
+                } else {
+                    h = w;
+                }
+                if (tokens.length > 2) {
+                    interpolation = Image.Interpolation.valueOf(tokens[2]);
+                } else {
+                    interpolation = Image.Interpolation.BILINEAR;
+                }
+                addTransform(new Resize(w, h, interpolation));
             }
-            if (getBooleanValue(arguments, "toTensor", true)) {
+            String resizeShort = ArgumentsUtil.stringValue(arguments, "resizeShort", "false");
+            if ("true".equals(resizeShort)) {
+                int shortEdge = Math.max(width, height);
+                addTransform(new ResizeShort(shortEdge));
+            } else if (!"false".equals(resizeShort)) {
+                String[] tokens = resizeShort.split("\\s*,\\s*");
+                int shortEdge = (int) Double.parseDouble(tokens[0]);
+                int longEdge;
+                Image.Interpolation interpolation;
+                if (tokens.length > 1) {
+                    longEdge = (int) Double.parseDouble(tokens[1]);
+                } else {
+                    longEdge = -1;
+                }
+                if (tokens.length > 2) {
+                    interpolation = Image.Interpolation.valueOf(tokens[2]);
+                } else {
+                    interpolation = Image.Interpolation.BILINEAR;
+                }
+                addTransform(new ResizeShort(shortEdge, longEdge, interpolation));
+            }
+            if (ArgumentsUtil.booleanValue(arguments, "centerCrop", false)) {
+                addTransform(new CenterCrop(width, height));
+            }
+            if (ArgumentsUtil.booleanValue(arguments, "centerFit")) {
+                addTransform(new CenterFit(width, height));
+            }
+            if (ArgumentsUtil.booleanValue(arguments, "toTensor", true)) {
                 addTransform(new ToTensor());
             }
-            String normalize = getStringValue(arguments, "normalize", "false");
+            String normalize = ArgumentsUtil.stringValue(arguments, "normalize", "false");
             if ("true".equals(normalize)) {
                 addTransform(new Normalize(MEAN, STD));
             } else if (!"false".equals(normalize)) {
@@ -259,6 +305,9 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
         /**
          * Sets the URL of the synset file.
          *
+         * <p>Only {@code http} and {@code https} URLs are supported. Use {@link
+         * #optSynsetArtifactName(String)} for a synset file stored with the model.
+         *
          * @param synsetUrl the URL of the synset file
          * @return the builder
          */
@@ -288,6 +337,21 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
             super.validate();
             if (synsetLoader == null) {
                 synsetLoader = new SynsetLoader("synset.txt");
+            }
+            boolean hasCrop = false;
+            boolean sizeMismatch = false;
+            for (Transform transform : pipeline.getTransforms()) {
+                if (transform instanceof Resize) {
+                    Resize resize = (Resize) transform;
+                    if (width != resize.getWidth() || height != resize.getHeight()) {
+                        sizeMismatch = true;
+                    }
+                } else if (transform instanceof CenterCrop || transform instanceof CenterFit) {
+                    hasCrop = true;
+                }
+            }
+            if (sizeMismatch && !hasCrop) {
+                throw new IllegalArgumentException("resized image has mismatched target size");
             }
         }
 
@@ -320,6 +384,20 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
         }
 
         public SynsetLoader(URL synsetUrl) {
+            // synsetUrl can come from the model's own arguments, so it is limited to a remote
+            // fetch, which Utils.openUrl checks. A local synset is named with synsetFileName and
+            // resolved in the model directory.
+            String protocol = synsetUrl.getProtocol();
+            if (!Utils.isInsecureUrlAllowed()
+                    && !"http".equalsIgnoreCase(protocol)
+                    && !"https".equalsIgnoreCase(protocol)) {
+                throw new IllegalArgumentException(
+                        "Unsupported synsetUrl protocol: "
+                                + protocol
+                                + ". Use synsetFileName (optSynsetArtifactName) for a file in the"
+                                + " model directory, or set DJL_ALLOW_INSECURE_URL=true to"
+                                + " override.");
+            }
             this.synsetUrl = synsetUrl;
         }
 
@@ -331,7 +409,7 @@ public abstract class BaseImageTranslator<T> implements Translator<Image, T> {
             if (synset != null) {
                 return synset;
             } else if (synsetUrl != null) {
-                try (InputStream is = synsetUrl.openStream()) {
+                try (InputStream is = Utils.openUrl(synsetUrl)) {
                     return Utils.readLines(is);
                 }
             }

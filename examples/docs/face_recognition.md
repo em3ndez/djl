@@ -25,9 +25,9 @@ You can find the image used in this example in the project test resource folder:
 ### Build the project and run
 Use the following command to run the project:
 
-```
+```sh
 cd examples
-./gradlew run -Dmain=ai.djl.examples.inference.face.FeatureExtraction -Dai.djl.default_engine=PyTorch
+./gradlew run -Dmain=ai.djl.examples.inference.face.FeatureExtraction
 ```
 
 Your output should look like the following:
@@ -36,9 +36,9 @@ Your output should look like the following:
 [INFO ] - [-0.04026184, -0.019486362, -0.09802659, 0.01700999, 0.037829027, ...]
 ```
 
-```
+```sh
 cd examples
-./gradlew run -Dmain=ai.djl.examples.inference.face.FeatureComparison -Dai.djl.default_engine=PyTorch
+./gradlew run -Dmain=ai.djl.examples.inference.face.FeatureComparison
 ```
 
 Your output should look like the following:

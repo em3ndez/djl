@@ -19,8 +19,10 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.translate.Translator;
 import ai.djl.translate.TranslatorContext;
+import ai.djl.util.Float16Utils;
 import ai.djl.util.PairList;
-import java.io.ByteArrayInputStream;
+import ai.djl.util.passthrough.PassthroughNDManager;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -30,7 +32,11 @@ import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * NDArray managers are used to create <I>NDArrays</I> (n-dimensional array on native engine).
@@ -101,6 +107,17 @@ import java.nio.file.Path;
  */
 public interface NDManager extends AutoCloseable {
 
+    AtomicLong UID_GENERATOR = new AtomicLong();
+
+    /**
+     * Returns a low-cost unique ID.
+     *
+     * @return a string UID.
+     */
+    static String nextUid() {
+        return "uid-" + System.nanoTime() + "-" + UID_GENERATOR.incrementAndGet();
+    }
+
     /**
      * Creates a new top-level {@code NDManager}.
      *
@@ -109,6 +126,9 @@ public interface NDManager extends AutoCloseable {
      * @return a new top-level {@code NDManager}
      */
     static NDManager newBaseManager() {
+        if (Engine.getAllEngines().isEmpty()) {
+            return PassthroughNDManager.INSTANCE;
+        }
         return Engine.getInstance().newBaseManager();
     }
 
@@ -120,6 +140,16 @@ public interface NDManager extends AutoCloseable {
      */
     static NDManager newBaseManager(Device device) {
         return Engine.getInstance().newBaseManager(device);
+    }
+
+    /**
+     * Creates a new top-level {@code NDManager} with specified engine.
+     *
+     * @param engineName the name of the engine
+     * @return a new top-level {@code NDManager}
+     */
+    static NDManager newBaseManager(String engineName) {
+        return Engine.getEngine(engineName).newBaseManager();
     }
 
     /**
@@ -139,9 +169,19 @@ public interface NDManager extends AutoCloseable {
      * @param resource the resource to use
      * @return a new memory scrope containing the array
      */
-    static NDManager from(NDResource resource) {
+    static NDManager subManagerOf(NDResource resource) {
         return resource.getManager().newSubManager();
     }
+
+    /**
+     * Returns the default context used in Engine.
+     *
+     * <p>The default type is defined by whether the deep learning engine is recognizing GPUs
+     * available on your machine. If there is no GPU available, CPU will be used.
+     *
+     * @return a {@link Device}
+     */
+    Device defaultDevice();
 
     /**
      * Allocates a new engine specific direct byte buffer.
@@ -150,6 +190,14 @@ public interface NDManager extends AutoCloseable {
      * @return the new byte buffer
      */
     ByteBuffer allocateDirect(int capacity);
+
+    /**
+     * Creates a new {@code NDArray} if the input {@link NDArray} is from an external engine.
+     *
+     * @param array the input {@code NDArray}
+     * @return a new {@code NDArray} if the input {@code NDArray} is from external engine
+     */
+    NDArray from(NDArray array);
 
     /**
      * Creates an uninitialized instance of {@link DataType#FLOAT32} {@link NDArray} with specified
@@ -180,7 +228,8 @@ public interface NDManager extends AutoCloseable {
         } else if (data instanceof Byte) {
             return create(data.byteValue());
         } else {
-            throw new IllegalArgumentException("Short conversion not supported!");
+            throw new IllegalArgumentException(
+                    "Conversion of " + data.getClass().getName() + " not supported!");
         }
     }
 
@@ -250,7 +299,9 @@ public interface NDManager extends AutoCloseable {
      * @param data the String data that needs to be set
      * @return a new instance of {@link NDArray}
      */
-    NDArray create(String data);
+    default NDArray create(String data) {
+        return create(new String[] {data}, StandardCharsets.UTF_8, new Shape());
+    }
 
     /**
      * Creates and initializes 1D {@link NDArray}.
@@ -258,7 +309,41 @@ public interface NDManager extends AutoCloseable {
      * @param data the String data that needs to be set
      * @return a new instance of {@link NDArray}
      */
-    NDArray create(String[] data);
+    default NDArray create(String[] data) {
+        return create(data, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Creates and initializes 1D {@link NDArray}.
+     *
+     * @param data the String data that needs to be set
+     * @param charset the charset to decode the string
+     * @return a new instance of {@link NDArray}
+     */
+    default NDArray create(String[] data, Charset charset) {
+        return create(data, charset, new Shape(data.length));
+    }
+
+    /**
+     * Creates a String {@link NDArray} based on the provided shape.
+     *
+     * @param data the flattened String array
+     * @param shape the shape of the String NDArray
+     * @return a new instance of {@code NDArray}
+     */
+    default NDArray create(String[] data, Shape shape) {
+        return create(data, StandardCharsets.UTF_8, shape);
+    }
+
+    /**
+     * Creates a String {@link NDArray} based on the provided shape.
+     *
+     * @param data the flattened String array
+     * @param charset the charset to decode the string
+     * @param shape the shape of the String NDArray
+     * @return a new instance of {@code NDArray}
+     */
+    NDArray create(String[] data, Charset charset, Shape shape);
 
     /**
      * Creates and initializes a 1D {@link NDArray}.
@@ -327,12 +412,14 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      */
     default NDArray create(float[][] data) {
-        FloatBuffer buffer = FloatBuffer.allocate(data.length * data[0].length);
+        Shape shape = new Shape(data.length, data[0].length);
+        int size = BaseNDManager.toBufferSize(shape.size(), DataType.FLOAT32);
+        FloatBuffer buffer = allocateDirect(size).asFloatBuffer();
         for (float[] d : data) {
             buffer.put(d);
         }
         buffer.rewind();
-        return create(buffer, new Shape(data.length, data[0].length));
+        return create(buffer, shape);
     }
 
     /**
@@ -342,12 +429,14 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      */
     default NDArray create(int[][] data) {
-        IntBuffer buffer = IntBuffer.allocate(data.length * data[0].length);
+        Shape shape = new Shape(data.length, data[0].length);
+        int size = BaseNDManager.toBufferSize(shape.size(), DataType.INT32);
+        IntBuffer buffer = allocateDirect(size).asIntBuffer();
         for (int[] d : data) {
             buffer.put(d);
         }
         buffer.rewind();
-        return create(buffer, new Shape(data.length, data[0].length));
+        return create(buffer, shape);
     }
 
     /**
@@ -357,12 +446,14 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      */
     default NDArray create(double[][] data) {
-        DoubleBuffer buffer = DoubleBuffer.allocate(data.length * data[0].length);
+        Shape shape = new Shape(data.length, data[0].length);
+        int size = BaseNDManager.toBufferSize(shape.size(), DataType.FLOAT64);
+        DoubleBuffer buffer = allocateDirect(size).asDoubleBuffer();
         for (double[] d : data) {
             buffer.put(d);
         }
         buffer.rewind();
-        return create(buffer, new Shape(data.length, data[0].length));
+        return create(buffer, shape);
     }
 
     /**
@@ -372,12 +463,14 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      */
     default NDArray create(long[][] data) {
-        LongBuffer buffer = LongBuffer.allocate(data.length * data[0].length);
+        Shape shape = new Shape(data.length, data[0].length);
+        int size = BaseNDManager.toBufferSize(shape.size(), DataType.INT64);
+        LongBuffer buffer = allocateDirect(size).asLongBuffer();
         for (long[] d : data) {
             buffer.put(d);
         }
         buffer.rewind();
-        return create(buffer, new Shape(data.length, data[0].length));
+        return create(buffer, shape);
     }
 
     /**
@@ -387,12 +480,14 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      */
     default NDArray create(byte[][] data) {
-        ByteBuffer buffer = ByteBuffer.allocate(data.length * data[0].length);
+        Shape shape = new Shape(data.length, data[0].length);
+        int size = BaseNDManager.toBufferSize(shape.size(), DataType.INT8);
+        ByteBuffer buffer = allocateDirect(size);
         for (byte[] d : data) {
             buffer.put(d);
         }
         buffer.rewind();
-        return create(buffer, new Shape(data.length, data[0].length));
+        return create(buffer, shape);
     }
 
     /**
@@ -402,14 +497,16 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      */
     default NDArray create(boolean[][] data) {
-        ByteBuffer buffer = ByteBuffer.allocate(data.length * data[0].length);
+        Shape shape = new Shape(data.length, data[0].length);
+        int size = BaseNDManager.toBufferSize(shape.size(), DataType.BOOLEAN);
+        ByteBuffer buffer = allocateDirect(size);
         for (boolean[] d : data) {
             for (boolean b : d) {
                 buffer.put((byte) (b ? 1 : 0));
             }
         }
         buffer.rewind();
-        return create(buffer, new Shape(data.length, data[0].length), DataType.BOOLEAN);
+        return create(buffer, shape, DataType.BOOLEAN);
     }
 
     /**
@@ -633,11 +730,7 @@ public interface NDManager extends AutoCloseable {
      * @return {@link NDArray}
      */
     default NDArray decode(byte[] bytes) {
-        try (DataInputStream dis = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            return decode(dis);
-        } catch (IOException e) {
-            throw new IllegalArgumentException("NDArray decoding failed", e);
-        }
+        return NDSerializer.decode(this, ByteBuffer.wrap(bytes));
     }
 
     /**
@@ -706,7 +799,14 @@ public interface NDManager extends AutoCloseable {
      * @return a new instance of {@link NDArray}
      * @see #zeros(Shape, DataType, Device)
      */
-    NDArray zeros(Shape shape, DataType dataType);
+    default NDArray zeros(Shape shape, DataType dataType) {
+        // Both narrowings fail closed: shape.size() is a long and the byte count is computed in
+        // 64-bit, so an element count or buffer size beyond int range throws instead of silently
+        // truncating or wrapping to an undersized allocation.
+        int size = Math.toIntExact(shape.size());
+        ByteBuffer bb = allocateDirect(BaseNDManager.toBufferSize(size, dataType));
+        return create(bb, shape, dataType);
+    }
 
     /**
      * Creates an instance of {@link NDArray} with specified {@link Device}, {@link Shape}, and
@@ -731,7 +831,41 @@ public interface NDManager extends AutoCloseable {
      * @param dataType the {@link DataType} of the {@link NDArray}
      * @return a new instance of {@link NDArray}
      */
-    NDArray ones(Shape shape, DataType dataType);
+    default NDArray ones(Shape shape, DataType dataType) {
+        // Both narrowings fail closed: shape.size() is a long and the byte count is computed in
+        // 64-bit, so an element count or buffer size beyond int range throws instead of silently
+        // truncating or wrapping to an undersized allocation.
+        int size = Math.toIntExact(shape.size());
+        ByteBuffer bb = allocateDirect(BaseNDManager.toBufferSize(size, dataType));
+        for (int i = 0; i < size; ++i) {
+            switch (dataType) {
+                case FLOAT16:
+                    bb.putShort(Float16Utils.ONE);
+                    break;
+                case FLOAT32:
+                    bb.putFloat(1f);
+                    break;
+                case FLOAT64:
+                    bb.putDouble(1d);
+                    break;
+                case INT32:
+                    bb.putInt(1);
+                    break;
+                case INT64:
+                    bb.putLong(1);
+                    break;
+                case UINT8:
+                case INT8:
+                    bb.put((byte) 1);
+                    break;
+                case UNKNOWN:
+                default:
+                    break;
+            }
+        }
+        bb.rewind();
+        return create(bb, shape, dataType);
+    }
 
     /**
      * Creates an instance of {@link NDArray} with specified {@link Shape} filled with ones.
@@ -1119,6 +1253,14 @@ public interface NDManager extends AutoCloseable {
     NDArray randomInteger(long low, long high, Shape shape, DataType dataType);
 
     /**
+     * Returns a random permutation of integers from 0 to n - 1.
+     *
+     * @param n (int) – the upper bound (exclusive)
+     * @return a random permutation of integers from 0 to n - 1.
+     */
+    NDArray randomPermutation(long n);
+
+    /**
      * Draws samples from a uniform distribution.
      *
      * <p>Samples are uniformly distributed over the half-open interval [low, high) (includes low,
@@ -1233,6 +1375,65 @@ public interface NDManager extends AutoCloseable {
     }
 
     /**
+     * Draws random samples from a normal (Gaussian) distribution with mean 0 and standard deviation
+     * 1, discarding and re-drawing any samples that are more than two standard deviations from the
+     * mean.
+     *
+     * <p>Samples are distributed according to a normal distribution parametrized by mean = 0 and
+     * standard deviation = 1.
+     *
+     * @param shape the output {@link Shape}
+     * @return the drawn samples {@link NDArray}
+     */
+    default NDArray truncatedNormal(Shape shape) {
+        return truncatedNormal(0f, 1f, shape, DataType.FLOAT32);
+    }
+
+    /**
+     * Draws random samples from a normal (Gaussian) distribution with mean 0 and standard deviation
+     * 1, discarding and re-drawing any samples that are more than two standard deviations from the
+     * mean.
+     *
+     * @param shape the output {@link Shape}
+     * @param dataType the {@link DataType} of the {@link NDArray}
+     * @return the drawn samples {@link NDArray}
+     */
+    default NDArray truncatedNormal(Shape shape, DataType dataType) {
+        return truncatedNormal(0.0f, 1.0f, shape, dataType);
+    }
+
+    /**
+     * Draws random samples from a normal (Gaussian) distribution, discarding and re-drawing any
+     * samples that are more than two standard deviations from the mean.
+     *
+     * @param loc the mean (centre) of the distribution
+     * @param scale the standard deviation (spread or "width") of the distribution
+     * @param shape the output {@link Shape}
+     * @param dataType the {@link DataType} of the {@link NDArray}
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray truncatedNormal(float loc, float scale, Shape shape, DataType dataType);
+
+    /**
+     * Draws random samples from a normal (Gaussian) distribution, discarding and re-drawing any
+     * samples that are more than two standard deviations from the mean.
+     *
+     * @param loc the mean (centre) of the distribution
+     * @param scale the standard deviation (spread or "width") of the distribution
+     * @param shape the output {@link Shape}
+     * @param dataType the {@link DataType} of the {@link NDArray}
+     * @param device the {@link Device} of the {@link NDArray}
+     * @return the drawn samples {@link NDArray}
+     */
+    default NDArray truncatedNormal(
+            float loc, float scale, Shape shape, DataType dataType, Device device) {
+        if (device == null || device.equals(getDevice())) {
+            return truncatedNormal(loc, scale, shape, dataType);
+        }
+        return newSubManager(device).truncatedNormal(loc, scale, shape, dataType);
+    }
+
+    /**
      * Draw samples from a multinomial distribution.
      *
      * <p>The multinomial distribution is a multivariate generalization of the binomial
@@ -1268,11 +1469,106 @@ public interface NDManager extends AutoCloseable {
     NDArray randomMultinomial(int n, NDArray pValues, Shape shape);
 
     /**
+     * Concurrent sampling from multiple normal distributions with parameters *mu* (mean) and
+     * *sigma* (standard deviation).
+     *
+     * @param mu Means of the distributions
+     * @param sigma Standard deviations of the distributions
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray sampleNormal(NDArray mu, NDArray sigma);
+
+    /**
+     * Concurrent sampling from multiple normal distributions with parameters *mu* (mean) and
+     * *sigma* (standard deviation).
+     *
+     * @param mu Means of the distributions
+     * @param sigma Standard deviations of the distributions
+     * @param shape Shape to be sampled from each random distribution
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray sampleNormal(NDArray mu, NDArray sigma, Shape shape);
+
+    /**
+     * Draw random samples from a Poisson distribution.
+     *
+     * <p>Samples are distributed according to a Poisson distribution parametrized by *lambda*
+     * (rate). Samples will always be returned as a floating point data type.
+     *
+     * @param lam Lambda (rate) parameters of the distributions
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray samplePoisson(NDArray lam);
+
+    /**
+     * Draw random samples from a Poisson distribution.
+     *
+     * <p>Samples are distributed according to a Poisson distribution parametrized by *lambda*
+     * (rate). Samples will always be returned as a floating point data type.
+     *
+     * @param lam Lambda (rate) parameters of the distributions
+     * @param shape Shape to be sampled from each random distribution
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray samplePoisson(NDArray lam, Shape shape);
+
+    /**
+     * Draw random samples from a gamma distribution.
+     *
+     * <p>Samples are distributed according to a gamma distribution parametrized by *alpha* (shape)
+     * and *beta* (scale).
+     *
+     * @param alpha The shape of the gamma distribution
+     * @param beta The scale of the gamma distribution
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray sampleGamma(NDArray alpha, NDArray beta);
+
+    /**
+     * Draw random samples from a gamma distribution.
+     *
+     * <p>Samples are distributed according to a gamma distribution parametrized by *alpha* (shape)
+     * and *beta* (scale).
+     *
+     * @param alpha The shape of the gamma distribution
+     * @param beta The scale of the gamma distribution
+     * @param shape Shape to be sampled from each random distribution
+     * @return the drawn samples {@link NDArray}
+     */
+    NDArray sampleGamma(NDArray alpha, NDArray beta, Shape shape);
+
+    /**
+     * Builds the Hanning Window.
+     *
+     * <p>The Hanning was named for Julius von Hann, an Austrian meteorologist. It is also known as
+     * the Cosine Bell. Some authors prefer that it be called a Hann window, to help avoid confusion
+     * with the very similar Hamming window.
+     *
+     * @param numPoints Number of points in the output window.
+     * @return the window
+     */
+    default NDArray hanningWindow(long numPoints) {
+        float[] data = new float[(int) numPoints];
+        // shift from N -1 to N to trims off the last duplicate value from the symmetric window
+        for (int i = 1; i < data.length; i++) {
+            data[i] = (float) (0.5 * (1 - Math.cos((2 * Math.PI * i) / numPoints)));
+        }
+        return create(data);
+    }
+
+    /**
      * Check if the manager is still valid.
      *
      * @return the current status
      */
     boolean isOpen();
+
+    /**
+     * Caps this manager to prevent unintentional attachment of resources. This is useful to detect
+     * memory leaks at an early point in time. The attachment of sub managers is still allowed after
+     * this method has been called.
+     */
+    void cap();
 
     /**
      * Returns the parent {@code NDManager}.
@@ -1306,6 +1602,13 @@ public interface NDManager extends AutoCloseable {
     Device getDevice();
 
     /**
+     * Returns all {@link NDArray}s managed by this manager (including recursively).
+     *
+     * @return all {@link NDArray}s managed by this manager (including recursively)
+     */
+    List<NDArray> getManagedArrays();
+
+    /**
      * Attaches a resource to this {@code NDManager}.
      *
      * <p>The attached resource will be closed when this {@code NDManager} is closed.
@@ -1317,7 +1620,21 @@ public interface NDManager extends AutoCloseable {
      * @param resourceId the unique resourceId
      * @param resource the {@link AutoCloseable} resource to be attached
      */
-    void attachInternal(String resourceId, AutoCloseable resource);
+    void attachInternal(String resourceId, AutoCloseable... resource);
+
+    /**
+     * Attaches a resource to this {@code NDManager} circumventing any cap protection.
+     *
+     * <p>The attached resource will be closed when this {@code NDManager} is closed.
+     *
+     * <p>This attachment is internal. Many resources will internally track which manager they are
+     * attached to. In that case, you should call {@link NDResource#attach(NDManager)} instead and
+     * that should then call attachInternal.
+     *
+     * @param resourceId the unique resourceId
+     * @param resource the {@link AutoCloseable} resource to be attached
+     */
+    void attachUncappedInternal(String resourceId, AutoCloseable resource);
 
     /**
      * Temporarily attaches a resource to this {@code NDManager} to be returned when this is closed.
@@ -1428,4 +1745,11 @@ public interface NDManager extends AutoCloseable {
     /** {@inheritDoc} */
     @Override
     void close();
+
+    /**
+     * A {@link SystemNDManager} is a marker class for a base NDManager.
+     *
+     * <p>Unlike a typical {@link NDManager}, they can not be closed and don't track memory.
+     */
+    interface SystemNDManager {}
 }

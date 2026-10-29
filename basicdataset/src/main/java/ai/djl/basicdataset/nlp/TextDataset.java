@@ -16,15 +16,16 @@ import ai.djl.basicdataset.BasicDatasets;
 import ai.djl.basicdataset.utils.TextData;
 import ai.djl.basicdataset.utils.TextData.Configuration;
 import ai.djl.engine.Engine;
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.DefaultVocabulary;
 import ai.djl.modality.nlp.Vocabulary;
 import ai.djl.modality.nlp.embedding.EmbeddingException;
 import ai.djl.modality.nlp.embedding.TextEmbedding;
 import ai.djl.modality.nlp.embedding.TrainableWordEmbedding;
 import ai.djl.ndarray.NDManager;
+import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.training.dataset.RandomAccessDataset;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -46,7 +47,7 @@ public abstract class TextDataset extends RandomAccessDataset {
     protected NDManager manager;
     protected Usage usage;
 
-    protected Resource resource;
+    protected MRL mrl;
     protected boolean prepared;
     protected List<Sample> samples;
 
@@ -82,10 +83,10 @@ public abstract class TextDataset extends RandomAccessDataset {
     }
 
     /**
-     * Gets the {@link SimpleVocabulary} built while preprocessing the text data.
+     * Gets the {@link DefaultVocabulary} built while preprocessing the text data.
      *
      * @param source whether to get source or target vocabulary
-     * @return the {@link SimpleVocabulary}
+     * @return the {@link DefaultVocabulary}
      */
     public Vocabulary getVocabulary(boolean source) {
         TextData textData = source ? sourceTextData : targetTextData;
@@ -196,7 +197,7 @@ public abstract class TextDataset extends RandomAccessDataset {
         protected Usage usage;
 
         /** Constructs a new builder. */
-        Builder() {
+        protected Builder() {
             repository = BasicDatasets.REPOSITORY;
             groupId = BasicDatasets.GROUP_ID;
             usage = Usage.TRAIN;

@@ -12,6 +12,8 @@
  */
 package ai.djl.ndarray;
 
+import java.util.List;
+
 /** An object which is managed by an {@link NDManager} and tracks the manager it is attached to. */
 public interface NDResource extends AutoCloseable {
 
@@ -23,6 +25,13 @@ public interface NDResource extends AutoCloseable {
     NDManager getManager();
 
     /**
+     * Returns the {@link NDArray} or {@link NDArray}s contained within this resource.
+     *
+     * @return the {@link NDArray} or {@link NDArray}s contained within this resource
+     */
+    List<NDArray> getResourceNDArrays();
+
+    /**
      * Attaches this {@link NDResource} to the specified {@link NDManager}.
      *
      * <p>Attached resource will be closed when the {@link NDManager} is closed.
@@ -30,6 +39,18 @@ public interface NDResource extends AutoCloseable {
      * @param manager the {@link NDManager} to be attached to
      */
     void attach(NDManager manager);
+
+    /**
+     * Attaches this {@link NDResource} to the specified {@link NDManager} from which it was
+     * previously detached and temp-attached to the current manager of this resource. This is
+     * functionally equivalent to the attach method, however the cap-state disregarded when adding
+     * the resource back to the original manager.
+     *
+     * @param manager the {@link NDManager} to be attached to
+     */
+    default void returnResource(NDManager manager) {
+        attach(manager);
+    }
 
     /**
      * Temporarily attaches this {@link NDResource} to the specified {@link NDManager}.

@@ -15,47 +15,36 @@ package ai.djl.repository.zoo;
 import ai.djl.engine.Engine;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Set;
+
 /** A {@link ModelZoo} that contains models in specified locations. */
-public class DefaultModelZoo implements ModelZoo {
+public class DefaultModelZoo extends ModelZoo {
 
     public static final String GROUP_ID = "ai.djl.localmodelzoo";
 
     private static final Logger logger = LoggerFactory.getLogger(DefaultModelZoo.class);
 
-    private List<ModelLoader> modelLoaders;
-
-    /**
-     * Creates the {@code LocalModelZoo} instance from the given search locations.
-     *
-     * @param locations a comma separated urls where the models to be loaded from
-     */
-    public DefaultModelZoo(String locations) {
-        String[] urls = locations.split("\\s*,\\s*");
-        modelLoaders = new ArrayList<>(urls.length);
-        for (String url : urls) {
-            if (!url.isEmpty()) {
-                Repository repo = Repository.newInstance(url, url);
-                logger.debug("Scanning models in repo: {}, {}", repo.getClass(), url);
-                List<MRL> mrls = repo.getResources();
-                for (MRL mrl : mrls) {
-                    modelLoaders.add(new BaseModelLoader(repo, mrl, null, null));
-                }
-            } else {
-                logger.warn("Model location is empty.");
-            }
+    /** Constructs a new {@code LocalModelZoo} instance. */
+    @SuppressWarnings("this-escape")
+    public DefaultModelZoo() {
+        String locations = System.getProperty("ai.djl.repository.zoo.location");
+        if (locations != null) {
+            parseLocation(locations);
         }
     }
 
-    /** {@inheritDoc} */
-    @Override
-    public List<ModelLoader> getModelLoaders() {
-        return modelLoaders;
+    /**
+     * Constructs a new {@code LocalModelZoo} instance from the given search locations.
+     *
+     * @param locations a comma separated urls where the models to be loaded from
+     */
+    @SuppressWarnings("this-escape")
+    public DefaultModelZoo(String locations) {
+        parseLocation(locations);
     }
 
     /** {@inheritDoc} */
@@ -68,5 +57,20 @@ public class DefaultModelZoo implements ModelZoo {
     @Override
     public Set<String> getSupportedEngines() {
         return Engine.getAllEngines();
+    }
+
+    private void parseLocation(String locations) {
+        String[] urls = locations.split("\\s*,\\s*");
+        for (String url : urls) {
+            if (!url.isEmpty()) {
+                Repository repo = Repository.newInstance(url, url);
+                logger.debug("Scanning models in repo: {}, {}", repo.getClass(), url);
+                for (MRL mrl : repo.getResources()) {
+                    addModel(mrl);
+                }
+            } else {
+                logger.warn("Model location is empty.");
+            }
+        }
     }
 }

@@ -12,29 +12,26 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
-import ai.djl.MalformedModelException;
-import ai.djl.repository.zoo.ModelNotFoundException;
+import ai.djl.ModelException;
+import ai.djl.testing.TestRequirements;
 import ai.djl.translate.TranslateException;
-import java.io.IOException;
-import org.testng.SkipException;
+
 import org.testng.annotations.Test;
+
+import java.io.IOException;
 
 public class TrainSentimentAnalysisTest {
 
     @Test
     public void testTrainSentimentAnalysis()
-            throws MalformedModelException, ModelNotFoundException, TranslateException,
-                    IOException {
-        // this is nightly test
-        if (!Boolean.getBoolean("nightly")) {
-            throw new SkipException("Nightly only");
-        }
-        if (Device.getGpuCount() == 0) {
-            throw new SkipException("GPU only");
-        }
+            throws ModelException, TranslateException, IOException {
+        TestRequirements.notArm();
+        TestRequirements.linux();
+        TestRequirements.nightly();
+        TestRequirements.gpu("MXNet", 1);
 
-        String[] args = new String[] {"-e", "1", "-g", "1"};
+        // TODO: Add a PyTorch Glove model to model zoo
+        String[] args = {"-e", "1", "-g", "1", "--engine", "MXNet"};
         TrainSentimentAnalysis.runExample(args);
     }
 }

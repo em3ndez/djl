@@ -23,7 +23,8 @@ import ai.djl.nn.Block;
 import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
-import java.util.Arrays;
+
+import java.util.Collections;
 
 /**
  * An Embedding from integer ids to float vectors. Output shape is the input shape + one dimension
@@ -32,7 +33,6 @@ import java.util.Arrays;
  */
 public final class IdEmbedding extends AbstractBlock {
 
-    private static final byte VERSION = 1;
     private static final String EMBEDDING_PARAM_NAME = "embedding";
 
     private int dictionarySize;
@@ -41,7 +41,6 @@ public final class IdEmbedding extends AbstractBlock {
     private Parameter embedding;
 
     private IdEmbedding(Builder builder) {
-        super(VERSION);
         this.dictionarySize = builder.dictionarySize;
         this.embeddingSize = builder.embeddingSize;
         this.embedding =
@@ -64,15 +63,20 @@ public final class IdEmbedding extends AbstractBlock {
     protected NDList forwardInternal(
             ParameterStore ps, NDList inputs, boolean training, PairList<String, Object> params) {
         NDArray input = inputs.singletonOrThrow();
-        // on info to the right shapes, see: http://beta.mxnet.io/r/api/mx.symbol.gather_nd.html
-        NDArray ids = input.flatten().reshape(1, input.getShape().size());
-        // create the embedding Table
-        NDArray embeddingTable = ps.getValue(embedding, ids.getDevice(), training);
-        // We do not perform a sparse lookup, instead we just project into the table
-        NDArray result = MissingOps.gatherNd(embeddingTable, ids);
-        // we want the original shape of the input + the last dimension of the embedding
-        Shape targetShape = input.getShape().addAll(new Shape(embeddingTable.getShape().get(1)));
-        return new NDList(result.reshape(targetShape));
+        try (NDManager scope = NDManager.subManagerOf(input)) {
+            // on info to the right shapes, see: http://beta.mxnet.io/r/api/mx.symbol.gather_nd.html
+            NDArray ids = input.flatten().reshape(1, input.getShape().size());
+            // create the embedding Table
+            NDArray embeddingTable = ps.getValue(embedding, ids.getDevice(), training);
+            scope.tempAttachAll(embeddingTable);
+            // We do not perform a sparse lookup, instead we just project into the table
+            NDArray result = embeddingTable.gatherNd(ids);
+            result.attach(inputs.getManager());
+            // we want the original shape of the input + the last dimension of the embedding
+            Shape targetShape =
+                    input.getShape().addAll(new Shape(embeddingTable.getShape().get(1)));
+            return new NDList(result.reshape(targetShape));
+        }
     }
 
     /**
@@ -117,9 +121,10 @@ public final class IdEmbedding extends AbstractBlock {
         return ps.getValue(embedding, device, training);
     }
 
+    /** {@inheritDoc} */
     @Override
     public void initializeChildBlocks(NDManager manager, DataType dataType, Shape... inputShapes) {
-        inputNames = Arrays.asList("tokenIds");
+        inputNames = Collections.singletonList("tokenIds");
         // nothing else to do, we have no child blocks
     }
 

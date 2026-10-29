@@ -15,7 +15,10 @@ package ai.djl.nn;
 import ai.djl.ndarray.types.Shape;
 
 /** {@code AbstractSymbolBlock} is an abstract implementation of {@link SymbolBlock}. */
-public abstract class AbstractSymbolBlock extends AbstractBlock implements SymbolBlock {
+public abstract class AbstractSymbolBlock extends AbstractBaseBlock implements SymbolBlock {
+
+    /** Constructs a new {@code AbstractSymbolBlock} instance. */
+    public AbstractSymbolBlock() {}
 
     /**
      * Builds an empty block with the given version for parameter serialization.
@@ -30,5 +33,11 @@ public abstract class AbstractSymbolBlock extends AbstractBlock implements Symbo
     @Override
     public Shape[] getOutputShapes(Shape[] inputShapes) {
         throw new UnsupportedOperationException("not implement!");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public BlockList getChildren() {
+        return new BlockList();
     }
 }

@@ -12,9 +12,9 @@
  */
 package ai.djl.integration.tests.model_zoo.classification;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.basicmodelzoo.cv.classification.NiN;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -32,10 +32,12 @@ import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
 import ai.djl.translate.Batchifier;
 import ai.djl.util.PairList;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class NiNTest {
 
@@ -43,9 +45,9 @@ public class NiNTest {
     public void testTrainWithDefaultChannels() {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                        .optDevices(Device.getDevices(2));
+                        .optDevices(TestUtils.getDevices(2));
         Block nin = NiN.builder().build();
-        try (Model model = Model.newInstance("nin")) {
+        try (Model model = Model.newInstance("nin", TestUtils.getEngine())) {
             model.setBlock(nin);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 1;
@@ -95,13 +97,13 @@ public class NiNTest {
     public void testTrainWithCustomChannels() {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                        .optDevices(Device.getDevices(2));
+                        .optDevices(TestUtils.getDevices(2));
         Block nin =
                 NiN.builder()
                         .setDropOutRate(0.8f)
                         .setNumChannels(new int[] {48, 128, 384, 10})
                         .build();
-        try (Model model = Model.newInstance("nin")) {
+        try (Model model = Model.newInstance("nin", TestUtils.getEngine())) {
             model.setBlock(nin);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 1;
@@ -146,44 +148,48 @@ public class NiNTest {
 
     @Test
     public void testOutputShapes() {
-        NDManager manager = NDManager.newBaseManager();
-        int batchSize = 1;
-        NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
-        Shape currentShape = x.getShape();
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
+            int batchSize = 1;
+            NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
+            Shape currentShape = x.getShape();
 
-        Block nin = NiN.builder().build();
-        nin.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
-        nin.initialize(manager, DataType.FLOAT32, currentShape);
+            Block nin = NiN.builder().build();
+            nin.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+            nin.initialize(manager, DataType.FLOAT32, currentShape);
 
-        Map<String, Shape> shapeMap = new ConcurrentHashMap<>();
-        for (int i = 0; i < nin.getChildren().size(); i++) {
+            Map<String, Shape> shapeMap = new ConcurrentHashMap<>();
+            for (int i = 0; i < nin.getChildren().size(); i++) {
+                Shape[] newShape =
+                        nin.getChildren()
+                                .get(i)
+                                .getValue()
+                                .getOutputShapes(new Shape[] {currentShape});
+                currentShape = newShape[0];
+                shapeMap.put(nin.getChildren().get(i).getKey(), currentShape);
+            }
 
-            Shape[] newShape =
-                    nin.getChildren().get(i).getValue().getOutputShapes(new Shape[] {currentShape});
-            currentShape = newShape[0];
-            shapeMap.put(nin.getChildren().get(i).getKey(), currentShape);
+            Assert.assertEquals(
+                    shapeMap.get("01SequentialBlock"), new Shape(batchSize, 96, 54, 54));
+            Assert.assertEquals(
+                    shapeMap.get("03SequentialBlock"), new Shape(batchSize, 256, 26, 26));
+            Assert.assertEquals(
+                    shapeMap.get("05SequentialBlock"), new Shape(batchSize, 384, 12, 12));
+            Assert.assertEquals(shapeMap.get("08SequentialBlock"), new Shape(batchSize, 10, 5, 5));
         }
-
-        Assert.assertEquals(shapeMap.get("01SequentialBlock"), new Shape(batchSize, 96, 54, 54));
-        Assert.assertEquals(shapeMap.get("03SequentialBlock"), new Shape(batchSize, 256, 26, 26));
-        Assert.assertEquals(shapeMap.get("05SequentialBlock"), new Shape(batchSize, 384, 12, 12));
-        Assert.assertEquals(shapeMap.get("08SequentialBlock"), new Shape(batchSize, 10, 5, 5));
-        manager.close();
     }
 
     @Test
     public void testForwardMethod() {
-        NDManager manager = NDManager.newBaseManager();
-        Block nin = NiN.builder().build();
-        int batchSize = 1;
-        NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
-        nin.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
-        nin.initialize(manager, DataType.FLOAT32, x.getShape());
-        NDArray xHat =
-                nin.forward(new ParameterStore(manager, true), new NDList(x), false)
-                        .singletonOrThrow();
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
+            Block nin = NiN.builder().build();
+            int batchSize = 1;
+            NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
+            nin.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+            nin.initialize(manager, DataType.FLOAT32, x.getShape());
+            ParameterStore ps = new ParameterStore(manager, true);
+            NDArray xHat = nin.forward(ps, new NDList(x), false).singletonOrThrow();
 
-        Assert.assertEquals(xHat.getShape(), new Shape(batchSize, 10));
-        manager.close();
+            Assert.assertEquals(xHat.getShape(), new Shape(batchSize, 10));
+        }
     }
 }

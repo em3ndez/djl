@@ -13,6 +13,7 @@
 package ai.djl.nn;
 
 import ai.djl.MalformedModelException;
+import ai.djl.inference.streaming.StreamingBlock;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -20,11 +21,17 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * {@code SequentialBlock} is a {@link Block} whose children form a chain of blocks with each child
@@ -33,9 +40,10 @@ import java.util.function.Function;
  *
  * <p>{@code SequentialBlock} has no direct parameters.
  */
-public class SequentialBlock extends AbstractBlock {
+public class SequentialBlock extends AbstractBlock implements StreamingBlock {
 
-    private static final byte VERSION = 2;
+    private static final byte VERSION = 3;
+    private boolean returnIntermediate;
 
     /**
      * Creates an empty sequential block. Use {@code add} and {@code addAll} to add blocks to be
@@ -92,6 +100,18 @@ public class SequentialBlock extends AbstractBlock {
     }
 
     /**
+     * Adds a {@link LambdaBlock} that applies the given function to the sequence of blocks.
+     *
+     * @param f the function forms the {@link LambdaBlock}
+     * @param name the function name
+     * @return this block
+     */
+    public SequentialBlock add(Function<NDList, NDList> f, String name) {
+        add(new LambdaBlock(f, name));
+        return this;
+    }
+
+    /**
      * Adds a {@link LambdaBlock#singleton(Function)} that applies the given function to the
      * sequence of blocks.
      *
@@ -101,6 +121,20 @@ public class SequentialBlock extends AbstractBlock {
      */
     public SequentialBlock addSingleton(Function<NDArray, NDArray> f) {
         add(LambdaBlock.singleton(f));
+        return this;
+    }
+
+    /**
+     * Adds a {@link LambdaBlock#singleton(Function)} that applies the given function to the
+     * sequence of blocks.
+     *
+     * @param f the function forms the {@link LambdaBlock}
+     * @param name the function name
+     * @return this block
+     * @see LambdaBlock#singleton(Function)
+     */
+    public SequentialBlock addSingleton(Function<NDArray, NDArray> f, String name) {
+        add(LambdaBlock.singleton(f, name));
         return this;
     }
 
@@ -121,6 +155,29 @@ public class SequentialBlock extends AbstractBlock {
         }
     }
 
+    /**
+     * Returns whether the block returns all intermediate block results or only the end of the
+     * sequential chain.
+     *
+     * @return whether the block returns all intermediate block results or only the end of the
+     *     sequential chain
+     */
+    public boolean isReturnIntermediate() {
+        return returnIntermediate;
+    }
+
+    /**
+     * Sets whether the block returns all intermediate sequence results.
+     *
+     * @param returnIntermediate true for intermediates, false for only chain result (default and
+     *     typical behavior is false)
+     * @return this {@link SequentialBlock}
+     */
+    public SequentialBlock setReturnIntermediate(boolean returnIntermediate) {
+        this.returnIntermediate = returnIntermediate;
+        return this;
+    }
+
     /** {@inheritDoc} */
     @Override
     protected NDList forwardInternal(
@@ -128,9 +185,15 @@ public class SequentialBlock extends AbstractBlock {
             NDList inputs,
             boolean training,
             PairList<String, Object> params) {
+        List<NDList> past = new ArrayList<>(children.size());
         NDList current = inputs;
         for (Block block : children.values()) {
             current = block.forward(parameterStore, current, training);
+            past.add(current);
+        }
+        if (returnIntermediate) {
+            return new NDList(
+                    past.stream().flatMap(Collection::stream).collect(Collectors.toList()));
         }
         return current;
     }
@@ -142,20 +205,38 @@ public class SequentialBlock extends AbstractBlock {
             NDList data,
             NDList labels,
             PairList<String, Object> params) {
+        List<NDList> past = new ArrayList<>(children.size());
         NDList current = data;
         for (Block block : children.values()) {
             current = block.forward(parameterStore, current, labels, params);
+            past.add(current);
+        }
+        if (returnIntermediate) {
+            return new NDList(
+                    past.stream().flatMap(Collection::stream).collect(Collectors.toList()));
         }
         return current;
     }
 
     /** {@inheritDoc} */
     @Override
+    public Iterator<NDList> forwardStreamIter(
+            ParameterStore parameterStore,
+            NDList inputs,
+            boolean training,
+            PairList<String, Object> params) {
+        return new StreamIterator(parameterStore, inputs, training);
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public void initializeChildBlocks(NDManager manager, DataType dataType, Shape... inputShapes) {
         Shape[] shapes = inputShapes;
+        DataType[] lastDataTypes = null;
         for (Block child : getChildren().values()) {
             child.initialize(manager, dataType, shapes);
-            shapes = child.getOutputShapes(shapes);
+            shapes = child.getOutputShapes(shapes, lastDataTypes);
+            lastDataTypes = child.getOutputDataTypes();
         }
     }
 
@@ -165,34 +246,67 @@ public class SequentialBlock extends AbstractBlock {
         if (children.isEmpty()) {
             throw new IllegalArgumentException("The sequential block is empty");
         }
+        List<Shape[]> past = new ArrayList<>(children.size());
         Shape[] current = inputs;
         for (Block block : children.values()) {
             current = block.getOutputShapes(current);
+            past.add(current);
+        }
+        if (returnIntermediate) {
+            return past.stream().flatMap(Arrays::stream).toArray(Shape[]::new);
         }
         return current;
     }
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
-            throws IOException, MalformedModelException {
-        if (version == VERSION) {
-            readInputShapes(is);
-        } else if (version != 1) {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
-        }
+    protected void saveMetadata(DataOutputStream os) throws IOException {
+        saveInputShapes(os);
+        os.writeBoolean(returnIntermediate);
     }
 
     /** {@inheritDoc} */
     @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder(200);
-        sb.append("Sequential(\n");
-        for (Block block : children.values()) {
-            String blockString = block.toString().replaceAll("(?m)^", "\t");
-            sb.append(blockString).append('\n');
+    public void loadMetadata(byte loadVersion, DataInputStream is)
+            throws IOException, MalformedModelException {
+        if (loadVersion == version) {
+            readInputShapes(is);
+            returnIntermediate = is.readBoolean();
+        } else if (loadVersion == 2) {
+            readInputShapes(is);
+        } else {
+            throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
-        sb.append(')');
-        return sb.toString();
+    }
+
+    private final class StreamIterator implements Iterator<NDList> {
+
+        private int childIndex;
+        private ParameterStore parameterStore;
+        private NDList current;
+        private boolean training;
+
+        private StreamIterator(ParameterStore parameterStore, NDList inputs, boolean training) {
+            this.parameterStore = parameterStore;
+            this.current = inputs;
+            this.training = training;
+            childIndex = 0;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public boolean hasNext() {
+            return childIndex < children.size();
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public NDList next() {
+            current =
+                    children.get(childIndex++)
+                            .getValue()
+                            .forward(parameterStore, current, training);
+            return current;
+        }
     }
 }

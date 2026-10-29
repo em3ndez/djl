@@ -12,6 +12,7 @@
  */
 package ai.djl.integration.tests.training;
 
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -19,6 +20,7 @@ import ai.djl.training.loss.ElasticNetWeightDecay;
 import ai.djl.training.loss.L1WeightDecay;
 import ai.djl.training.loss.L2WeightDecay;
 import ai.djl.training.loss.Loss;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -26,12 +28,12 @@ public class WeightDecayTest {
 
     @Test
     public void l1DecayTest() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray parameters1 = manager.create(new float[] {-1, -2, 3, 4, 5}); // 15
             NDArray parameters2 = manager.create(new float[] {-1, -1, -1, -1, -1}); // 5
             // Not used
-            NDArray pred = manager.create(new float[] {});
-            NDArray label = manager.create(new float[] {});
+            NDArray pred = manager.create(new float[0]);
+            NDArray label = manager.create(new float[0]);
             // r = 2*(15 + 5) = 40
             L1WeightDecay decay =
                     Loss.l1WeightedDecay("", 2.0f, new NDList(parameters1, parameters2));
@@ -42,12 +44,12 @@ public class WeightDecayTest {
 
     @Test
     public void l2DecayTest() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray parameters1 = manager.create(new float[] {-1, -2, 3, 4, 5}); // 55
             NDArray parameters2 = manager.create(new float[] {-1, -1, -1, -1, -1}); // 5
             // Not used
-            NDArray pred = manager.create(new float[] {});
-            NDArray label = manager.create(new float[] {});
+            NDArray pred = manager.create(new float[0]);
+            NDArray label = manager.create(new float[0]);
             // r = 2*(55 + 5) = 120
             L2WeightDecay decay =
                     Loss.l2WeightedDecay("", 2.0f, new NDList(parameters1, parameters2));
@@ -58,12 +60,12 @@ public class WeightDecayTest {
 
     @Test
     public void elasticNetDecayTest() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray parameters1 = manager.create(new float[] {-1, -2, 3, 4, 5});
             NDArray parameters2 = manager.create(new float[] {-1, -1, -1, -1, -1});
             // Not used
-            NDArray pred = manager.create(new float[] {});
-            NDArray label = manager.create(new float[] {});
+            NDArray pred = manager.create(new float[0]);
+            NDArray label = manager.create(new float[0]);
             // r = L1 + L2 = 2*20 + 1*60 = 100
             ElasticNetWeightDecay decay =
                     Loss.elasticNetWeightedDecay(

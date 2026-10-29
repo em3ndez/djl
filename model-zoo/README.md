@@ -12,7 +12,7 @@ You can find general ModelZoo and model loading document here:
 
 ## Documentation
 
-The latest javadocs can be found on the [djl.ai website](https://javadoc.io/doc/ai.djl/model-zoo/latest/index.html).
+The latest javadocs can be found on [here](https://javadoc.io/doc/ai.djl/model-zoo/latest/index.html).
 
 You can also build the latest javadocs locally using the following command:
 
@@ -33,7 +33,7 @@ You can pull the model zoo from the central Maven repository by including the fo
 <dependency>
     <groupId>ai.djl</groupId>
     <artifactId>model-zoo</artifactId>
-    <version>0.10.0</version>
+    <version>0.39.0</version>
 </dependency>
 ```
 
@@ -54,27 +54,15 @@ The following is an example of the criteria to find a Resnet50-v1 model that has
 ```java
     Criteria<Image, Classifications> criteria =
             Criteria.builder()
-                    .optApplication(Application.CV.OBJECT_DETECTION)
+                    .optApplication(Application.CV.IMAGE_CLASSIFICATION)
                     .setTypes(Image.class, Classifications.class)
-                    .optFilter("layer", "50")
+                    .optFilter("layers", "50")
                     .optFilter("flavor", "v1")
                     .optFilter("dataset", "cifar10")
                     .build();
 
-    ZooModel<Image, Classifications> ssd = ModelZoo.loadModel(criteria));
+    ZooModel<Image, Classifications> ssd = criteria.loadModel();
 ```
-
-If you already known which `ModelLoader` to use, you can simply do the following:
-
-```java
-    Map<String, String> filter = new HashMap<>();
-    filter.put("layers", "50");
-    filter.put("flavor", "v1");
-    filter.put("dataset", "cifar10");
-
-    ZooModel<Image, Classifications> model = BasicModelZoo.RESNET.loadModel(filter);
-```
-
 
 ## Contributor Guides and Documentation
 

@@ -15,6 +15,12 @@ package ai.djl.repository;
 import ai.djl.Application;
 import ai.djl.repository.zoo.DefaultModelZoo;
 import ai.djl.util.Progress;
+import ai.djl.util.Utils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -23,8 +29,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * A {@code JarRepository} is a {@link Repository} contains an archive file from classpath.
@@ -35,19 +39,27 @@ public class JarRepository extends AbstractRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(SimpleUrlRepository.class);
 
-    private String name;
-    private URI uri;
     private String artifactId;
     private String modelName;
+    private String queryString;
+    private String originalUri;
 
     private Metadata metadata;
     private boolean resolved;
 
-    JarRepository(String name, URI uri, String artifactId, String modelName) {
-        this.name = name;
-        this.uri = uri;
-        this.artifactId = artifactId;
-        this.modelName = modelName;
+    JarRepository(String name, URI uri, String fileName, URI realUri) {
+        super(name, uri);
+        this.uri = realUri;
+        queryString = uri.getRawQuery();
+        originalUri = uri.toString();
+        modelName = arguments.get("model_name");
+        artifactId = arguments.get("artifact_id");
+        if (artifactId == null) {
+            artifactId = fileName;
+        }
+        if (modelName == null) {
+            modelName = artifactId;
+        }
     }
 
     /** {@inheritDoc} */
@@ -58,25 +70,13 @@ public class JarRepository extends AbstractRepository {
 
     /** {@inheritDoc} */
     @Override
-    public String getName() {
-        return name;
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public URI getBaseUri() {
-        return uri;
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public Metadata locate(MRL mrl) {
         return getMetadata();
     }
 
     /** {@inheritDoc} */
     @Override
-    public Artifact resolve(MRL mrl, String version, Map<String, String> filter) {
+    public Artifact resolve(MRL mrl, Map<String, String> filter) {
         List<Artifact> artifacts = locate(mrl).getArtifacts();
         if (artifacts.isEmpty()) {
             return null;
@@ -89,7 +89,7 @@ public class JarRepository extends AbstractRepository {
     public List<MRL> getResources() {
         Metadata m = getMetadata();
         if (m != null && !m.getArtifacts().isEmpty()) {
-            MRL mrl = MRL.undefined(m.getGroupId(), m.getArtifactId());
+            MRL mrl = MRL.undefined(this, m.getGroupId(), m.getArtifactId());
             return Collections.singletonList(mrl);
         }
         return Collections.emptyList();
@@ -100,8 +100,8 @@ public class JarRepository extends AbstractRepository {
     protected void download(Path tmp, URI baseUri, Artifact.Item item, Progress progress)
             throws IOException {
         logger.debug("Extracting artifact: {} ...", uri);
-        try (InputStream is = uri.toURL().openStream()) {
-            save(is, tmp, baseUri, item, progress);
+        try (InputStream is = new BufferedInputStream(uri.toURL().openStream())) {
+            save(is, tmp, item, progress);
         }
     }
 
@@ -112,23 +112,29 @@ public class JarRepository extends AbstractRepository {
 
         resolved = true;
         Artifact artifact = new Artifact();
+        artifact.setName(modelName);
+        artifact.getArguments().putAll(arguments);
         Map<String, Artifact.Item> files = new ConcurrentHashMap<>();
         Artifact.Item item = new Artifact.Item();
-        item.setUri(uri.getPath());
+        item.setUri(uri.getSchemeSpecificPart());
         item.setName(""); // avoid creating extra folder
         item.setArtifact(artifact);
         item.setSize(-1);
         files.put(artifactId, item);
         artifact.setFiles(files);
-        artifact.setName(modelName);
 
         metadata = new Metadata.MatchAllMetadata();
-        metadata.setApplication(Application.UNDEFINED);
-        metadata.setGroupId(DefaultModelZoo.GROUP_ID);
         metadata.setArtifactId(artifactId);
         metadata.setArtifacts(Collections.singletonList(artifact));
-        String hash = md5hash(uri.toString());
-        MRL mrl = MRL.model(Application.UNDEFINED, DefaultModelZoo.GROUP_ID, hash);
+        String hashKey;
+        if (Boolean.parseBoolean(arguments.get("ignore_real_uri"))) {
+            hashKey = originalUri;
+        } else {
+            hashKey = queryString == null ? uri.toString() : uri.toString() + queryString;
+        }
+
+        String hash = Utils.hash(hashKey);
+        MRL mrl = model(Application.UNDEFINED, DefaultModelZoo.GROUP_ID, hash);
         metadata.setRepositoryUri(mrl.toURI());
 
         return metadata;

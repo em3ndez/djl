@@ -13,71 +13,52 @@
 
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.ModelException;
 import ai.djl.engine.Engine;
 import ai.djl.examples.training.transferlearning.TrainResnetWithCifar10;
+import ai.djl.testing.TestRequirements;
 import ai.djl.training.TrainingResult;
 import ai.djl.translate.TranslateException;
-import java.io.IOException;
+
 import org.testng.Assert;
-import org.testng.SkipException;
 import org.testng.annotations.Test;
 
+import java.io.IOException;
+
 public class TrainResNetTest {
+
     private static final int SEED = 1234;
 
     @Test
     public void testTrainResNet() throws ModelException, IOException, TranslateException {
+        TestRequirements.nightly();
+        TestRequirements.gpu("PyTorch", 1);
+
         // Limit max 4 gpu for cifar10 training to make it converge faster.
         // and only train 10 batch for unit test.
-        String[] args = {"-e", "2", "-g", "4", "-m", "10", "-s", "-p"};
-
+        String[] args = {"-e", "2", "-g", "4", "-m", "10", "-p"};
         TrainingResult result = TrainResnetWithCifar10.runExample(args);
+
         Assert.assertNotNull(result);
-    }
-
-    @Test
-    public void testTrainResNetSymbolicNightly()
-            throws ModelException, IOException, TranslateException {
-        // this is nightly test
-        if (!Boolean.getBoolean("nightly")) {
-            throw new SkipException("Nightly only");
-        }
-        if (Device.getGpuCount() > 0) {
-            // Limit max 4 gpu for cifar10 training to make it converge faster.
-            // and only train 10 batch for unit test.
-            String[] args = {"-e", "10", "-g", "4", "-s", "-p"};
-
-            Engine.getInstance().setRandomSeed(SEED);
-            TrainingResult result = TrainResnetWithCifar10.runExample(args);
-            Assert.assertNotNull(result);
-
-            Assert.assertTrue(result.getTrainEvaluation("Accuracy") >= 0.8f);
-            Assert.assertTrue(result.getValidateEvaluation("Accuracy") >= 0.68f);
-            Assert.assertTrue(result.getValidateLoss() < 1.1);
-        }
     }
 
     @Test
     public void testTrainResNetImperativeNightly()
             throws ModelException, IOException, TranslateException {
-        // this is nightly test
-        if (!Boolean.getBoolean("nightly")) {
-            throw new SkipException("Nightly only");
-        }
-        if (Device.getGpuCount() > 0) {
-            // Limit max 4 gpu for cifar10 training to make it converge faster.
-            // and only train 10 batch for unit test.
-            String[] args = {"-e", "10", "-g", "4"};
+        TestRequirements.linux();
+        TestRequirements.nightly();
+        TestRequirements.gpu("PyTorch", 4);
 
-            Engine.getInstance().setRandomSeed(SEED);
-            TrainingResult result = TrainResnetWithCifar10.runExample(args);
-            Assert.assertNotNull(result);
+        // Limit max 4 gpu for cifar10 training to make it converge faster.
+        // and only train 10 batch for unit test.
+        String[] args = {"-e", "10", "-g", "4"};
 
-            Assert.assertTrue(result.getTrainEvaluation("Accuracy") >= 0.9f);
-            Assert.assertTrue(result.getValidateEvaluation("Accuracy") >= 0.75f);
-            Assert.assertTrue(result.getValidateLoss() < 1);
-        }
+        Engine.getEngine("PyTorch").setRandomSeed(SEED);
+        TrainingResult result = TrainResnetWithCifar10.runExample(args);
+        Assert.assertNotNull(result);
+
+        Assert.assertTrue(result.getTrainEvaluation("Accuracy") >= 0.9f);
+        Assert.assertTrue(result.getValidateEvaluation("Accuracy") >= 0.75f);
+        Assert.assertTrue(result.getValidateLoss() < 1);
     }
 }

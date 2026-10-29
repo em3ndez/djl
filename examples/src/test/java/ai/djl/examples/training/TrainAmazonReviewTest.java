@@ -12,26 +12,27 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.ModelException;
+import ai.djl.engine.Engine;
 import ai.djl.examples.training.transferlearning.TrainAmazonReviewRanking;
+import ai.djl.testing.TestRequirements;
 import ai.djl.translate.TranslateException;
+
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.net.URISyntaxException;
-import org.testng.SkipException;
-import org.testng.annotations.Test;
 
 public class TrainAmazonReviewTest {
 
     @Test
     public void testRankTraining()
             throws ModelException, TranslateException, IOException, URISyntaxException {
-        // this is nightly test
-        if (!Boolean.getBoolean("nightly")) {
-            throw new SkipException("Nightly only");
-        }
+        TestRequirements.linux();
+        TestRequirements.weekly();
+
         String[] args;
-        if (Device.getGpuCount() > 0) {
+        if (Engine.getEngine("PyTorch").getGpuCount() > 0) {
             args = new String[] {"-e", "1", "-g", "1"};
         } else {
             args = new String[] {"-e", "1", "-m", "2"};

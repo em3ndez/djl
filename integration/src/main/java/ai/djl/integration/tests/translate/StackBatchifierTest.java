@@ -12,20 +12,23 @@
  */
 package ai.djl.integration.tests.translate;
 
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.translate.Batchifier;
 import ai.djl.translate.StackBatchifier;
-import java.util.Arrays;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.util.Arrays;
 
 public class StackBatchifierTest {
 
     @Test
     public void testBatchify() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDList[] input = new NDList[5];
             Arrays.fill(
                     input,
@@ -41,7 +44,7 @@ public class StackBatchifierTest {
 
     @Test
     public void testUnbatchify() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDList input =
                     new NDList(manager.zeros(new Shape(10, 11)), manager.zeros(new Shape(10)));
             Batchifier batchifier = new StackBatchifier();
@@ -58,7 +61,7 @@ public class StackBatchifierTest {
 
     @Test
     public void testSplitEven() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDList input =
                     new NDList(manager.zeros(new Shape(10, 11)), manager.zeros(new Shape(10)));
             Batchifier batchifier = new StackBatchifier();
@@ -75,7 +78,7 @@ public class StackBatchifierTest {
 
     @Test
     public void testSplitUneven() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDList input =
                     new NDList(manager.zeros(new Shape(10, 11)), manager.zeros(new Shape(10)));
             Batchifier batchifier = new StackBatchifier();

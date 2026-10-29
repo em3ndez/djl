@@ -12,7 +12,7 @@
  */
 package ai.djl.basicdataset.cv;
 
-import ai.djl.Application.CV;
+import ai.djl.Application;
 import ai.djl.basicdataset.BasicDatasets;
 import ai.djl.modality.cv.Image;
 import ai.djl.modality.cv.ImageFactory;
@@ -22,10 +22,10 @@ import ai.djl.modality.cv.transform.ToTensor;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.translate.Pipeline;
 import ai.djl.util.PairList;
 import ai.djl.util.Progress;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -35,26 +35,32 @@ import java.util.Optional;
 /**
  * Coco image detection dataset from http://cocodataset.org/#home.
  *
+ * <p>Coco is a large-scale object detection, segmentation, and captioning dataset although only
+ * object detection is implemented at thsi time. It contains 1.5 million object instances and is one
+ * of the standard benchmark object detection datasets.
+ *
+ * <p>To use this dataset, you have to manually add {@code
+ * com.twelvemonkeys.imageio:imageio-jpeg:3.11.0} as a dependency in your project.
+ *
  * <p>Each image might have different {@link ai.djl.ndarray.types.Shape}s.
  */
 public class CocoDetection extends ObjectDetectionDataset {
-
+    // TODO: Add synset logic for coco dataset
     private static final String ARTIFACT_ID = "coco";
+    private static final String VERSION = "1.0";
 
     private Usage usage;
     private List<Path> imagePaths;
     private List<PairList<Long, Rectangle>> labels;
-
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     CocoDetection(Builder builder) {
         super(builder);
         usage = builder.usage;
+        mrl = builder.getMrl();
         imagePaths = new ArrayList<>();
         labels = new ArrayList<>();
-        MRL mrl = MRL.dataset(CV.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.0");
     }
 
     /**
@@ -66,9 +72,17 @@ public class CocoDetection extends ObjectDetectionDataset {
         return new Builder();
     }
 
+    /** {@inheritDoc} */
     @Override
     public PairList<Long, Rectangle> getObjects(long index) {
         return labels.get(Math.toIntExact(index));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<String> getClasses() {
+        throw new UnsupportedOperationException(
+                "getClasses() for CocoDetection has not been implemented yet.");
     }
 
     /** {@inheritDoc} */
@@ -78,9 +92,9 @@ public class CocoDetection extends ObjectDetectionDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
-        Path root = resource.getRepository().getResourceDirectory(artifact);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
+        Path root = mrl.getRepository().getResourceDirectory(artifact);
 
         Path jsonFile;
         switch (usage) {
@@ -139,11 +153,13 @@ public class CocoDetection extends ObjectDetectionDataset {
         return ImageFactory.getInstance().fromFile(imagePaths.get(idx));
     }
 
+    /** {@inheritDoc} */
     @Override
     public Optional<Integer> getImageWidth() {
         return Optional.empty();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Optional<Integer> getImageHeight() {
         return Optional.empty();
@@ -232,6 +248,10 @@ public class CocoDetection extends ObjectDetectionDataset {
                 pipeline = new Pipeline(new ToTensor());
             }
             return new CocoDetection(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(Application.CV.ANY, groupId, artifactId, VERSION);
         }
     }
 }

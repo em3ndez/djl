@@ -23,12 +23,12 @@ import ai.djl.ndarray.NDManager;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.training.dataset.Dataset;
 import ai.djl.training.dataset.RandomAccessDataset;
 import ai.djl.training.dataset.Record;
 import ai.djl.translate.Pipeline;
 import ai.djl.util.Progress;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -43,19 +43,20 @@ import java.util.List;
  */
 public class CaptchaDataset extends RandomAccessDataset {
 
+    private static final String ARTIFACT_ID = "captcha";
+    private static final String VERSION = "1.1";
+
     public static final int IMAGE_WIDTH = 160;
     public static final int IMAGE_HEIGHT = 60;
     public static final int CAPTCHA_LENGTH = 6;
-    public static final int CAPTCHA_OPTIONS = 11;
-
-    private static final String ARTIFACT_ID = "captcha";
+    public static final int CAPTCHA_OPTIONS = 12;
 
     private Usage usage;
     private List<String> items;
     private Artifact.Item dataItem;
     private String pathPrefix;
 
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     /**
@@ -66,8 +67,7 @@ public class CaptchaDataset extends RandomAccessDataset {
     public CaptchaDataset(Builder builder) {
         super(builder);
         this.usage = builder.usage;
-        MRL mrl = MRL.dataset(CV.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.1");
+        mrl = builder.getMrl();
     }
 
     /**
@@ -83,8 +83,7 @@ public class CaptchaDataset extends RandomAccessDataset {
     @Override
     public Record get(NDManager manager, long index) throws IOException {
         String item = items.get(Math.toIntExact(index));
-        Path imagePath =
-                resource.getRepository().getFile(dataItem, pathPrefix + '/' + item + ".jpeg");
+        Path imagePath = mrl.getRepository().getFile(dataItem, pathPrefix + '/' + item + ".jpeg");
         NDArray imageArray =
                 ImageFactory.getInstance()
                         .fromFile(imagePath)
@@ -118,14 +117,14 @@ public class CaptchaDataset extends RandomAccessDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
 
         dataItem = artifact.getFiles().get("data");
         pathPrefix = getUsagePath();
         items = new ArrayList<>();
         for (String filenameWithExtension :
-                resource.getRepository().listDirectory(dataItem, pathPrefix)) {
+                mrl.getRepository().listDirectory(dataItem, pathPrefix)) {
             String captchaFilename =
                     filenameWithExtension.substring(0, filenameWithExtension.lastIndexOf('.'));
             items.add(captchaFilename);
@@ -226,6 +225,10 @@ public class CaptchaDataset extends RandomAccessDataset {
          */
         public CaptchaDataset build() {
             return new CaptchaDataset(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(CV.ANY, groupId, artifactId, VERSION);
         }
     }
 }

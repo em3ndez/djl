@@ -3,15 +3,13 @@
 
 <head>
     <!-- Global site tag (gtag.js) - Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-159559852-2"></script>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-JE0V807433"></script>
     <script>
-        window.dataLayer = window.dataLayer || [];
+     window.dataLayer = window.dataLayer || [];
+     function gtag(){dataLayer.push(arguments);}
+     gtag('js', new Date());
 
-        function gtag() {
-            dataLayer.push(arguments);
-        }
-        gtag('js', new Date());
-        gtag('config', 'UA-159559852-2');
+     gtag('config', 'G-JE0V807433');
     </script>
     <!-- Google Tag Manager -->
     <script>
@@ -225,7 +223,8 @@
                         <div class="footer-copyright">
                             <div class="container swiper-no-swiping">
                                 <div>
-                                    Copyright 2019 <a class="blue-text text-lighten-3 text-underLine"
+                                   Copyright <span class="an-1">2019-{{ new Date().getFullYear() }}</span>
+                                   <a class="blue-text text-lighten-3 text-underLine"
                                         href="http://aws.amazon.com/" target="_blank"><i class="material-icons tiny"
                                             style="vertical-align: middle;">link</i>Amazon.com,
                                         Inc.</a> or its affiliates. All Rights Reserved.
@@ -248,12 +247,12 @@
 
     <!--  Scripts-->
     <!-- 生产环境版本，优化了尺寸和速度 -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
     <!-- <script src="website/js/init.js"></script> -->
     <!-- <script src='https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js'></script> -->
 
-    <script src="https://cdn.jsdelivr.net/npm/vue"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
     <!-- <script src="https://cdnjs.cloudflare.com/ajax/libs/Swiper/3.4.2/js/swiper.jquery.min.js"></script> -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Swiper/3.4.2/js/swiper.min.js"></script>
     <!-- <script src="website/js/script.js"></script> -->

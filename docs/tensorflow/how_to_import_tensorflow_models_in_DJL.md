@@ -49,9 +49,52 @@ Note that you need to click the download model button to find the actual Google 
 
 Please refer to these two examples:
 
-1. [Object Detection with TensorFlow](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/ObjectDetection.java) for loading from TensorFlow Hub url.
-2. [BERT Classification](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/BertClassification.java) for loading from local downloaded model.
+1. [Object Detection with TensorFlow](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/cv/ObjectDetection.java) for loading from TensorFlow Hub url.
+2. [BERT Classification](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/nlp/BertClassification.java) for loading from local downloaded model.
 
+## How to import TensorFlow models that use [TensorFlow Extensions](https://www.tensorflow.org/resources/libraries-extensions)
+
+You can use DJL to run TensorFlow models that require ops available in TensorFlow extensions
+(not in core), such as models that use ops in [TensorFlow Text](https://www.tensorflow.org/text).
+
+To use such models in DJL you must know:
+
+- Which extension contains the additional required ops
+- The TensorFlow extension library version that is compatible with the version of Tensorflow currently being used in DJL
+
+Here we show an example that uses DJL to run the [Multilingual Universal Sentence Encoder](https://tfhub.dev/google/universal-sentence-encoder-multilingual/3).
+This is a text encoder from tensorflow hub that uses ops from the TensorFlow Text extension.
+
+- You need to download the library files for the extension so that we can load them for use. [Here](https://github.com/tensorflow/text#install-using-pip) are instructions for downloading TensorFlow text. We'll use version `2.7.0` in this example.
+- After the library files are downloaded, you are ready to load them for use in DJL. You do this by using
+TensorFlow Java `TensorFlow.loadLibrary(...)` API before loading the model in DJL. 
+- We can update the existing [UniversalSentenceEncoder](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/nlp/UniversalSentenceEncoder.java) example to use the Multilingual model:
+
+```java
+// Build Criteria for Multilingual Universal Sentence Encoder from TensorFlow Hub
+String modelUrl = "https://tfhub.dev/google/universal-sentence-encoder-multilingual/3";
+Criteria<String[], float[][]> criteria =
+    Criteria.builder()
+        .optApplication(Application.NLP.TEXT_EMBEDDING)
+        .setTypes(String[].class, float[][].class)
+        .optModelUrls(modelUrl)
+        .optTranslator(new MyTranslator())
+        .optEngine("TensorFlow")
+        .optProgress(new ProgressBar())
+        .build();
+
+// Make sure TensorFlow engine is loaded before loading extension
+Engine.getEngine("TensorFlow");
+// Load TensorFlow Text libraries for necessary ops
+// Example Path of installation on Linux may look like: /home/<user>/.local/python-3.8.3/lib/python3.8/site-packages/tensorflow_text/
+TensorFlow.loadLibrary("<path_to_library_installation>/python/ops/_sentencepiece_tokenizer.so");
+
+// Run the model
+try (ZooModel<String[], float[][]> model = criteria.loadModel();
+    Predictor<String[], float[][]> predictor = model.newPredictor()) {
+    return predictor.predict(inputs.toArray(new String[0]));
+}
+```
 ## How to load TensorFlow Checkpoints
 
 To load an TensorFlow Estimator checkpoint, you need to convert it to SavedModel format in using Python.
@@ -73,7 +116,7 @@ For more information on saving, loading and exporting checkpoints, please refer 
 
 ## How to load DJL TensorFlow model zoo models
 
-The steps are the same as loading any other DJL model zoo models, you can use the `Criteria` API as documented [here](https://docs.djl.ai/docs/load_model.html#criteria-class).
+The steps are the same as loading any other DJL model zoo models, you can use the `Criteria` API as documented [here](https://docs.djl.ai/master/docs/load_model.html#criteria-class).
 
 Note for TensorFlow image classification models, you need to manually specify the translator instead of using the built-in one because
 TensorFlow requires channels last ("NHWC") image formats while DJL use channels first ("NCHW") image formats. By default, DJL will add
@@ -97,7 +140,7 @@ Criteria<Image, Classifications> criteria =
                         .optProgress(new ProgressBar())
                         .build();
 
-ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria);
+ZooModel<Image, Classifications> model = criteria.loadModel();
 ```
 
 ## How to import TensorFlow 1.x models
@@ -121,12 +164,12 @@ Criteria<Image, DetectedObjects> criteria =
                         .setTypes(Image.class, DetectedObjects.class)
                         .optFilter("backbone", "mobilenet_v2")
                         .optEngine("TensorFlow")
-                        .optOption("Tags", new String[] {})
+                        .optOption("Tags", "")
                         .optOption("SignatureDefKey", "default")
                         .optProgress(new ProgressBar())
                         .build();
 
-ZooModel<Image, DetectedObjects> model = ModelZoo.loadModel(criteria);
+ZooModel<Image, DetectedObjects> model = criteria.loadModel();
 ```
 
 ## Tips and tricks when writing Translator for TensorFlow models

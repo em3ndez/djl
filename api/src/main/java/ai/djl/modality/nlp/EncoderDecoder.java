@@ -20,6 +20,7 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -45,6 +46,7 @@ public class EncoderDecoder extends AbstractBlock {
      * @param encoder the {@link Encoder}
      * @param decoder the {@link Decoder}
      */
+    @SuppressWarnings("this-escape")
     public EncoderDecoder(Encoder encoder, Decoder decoder) {
         super(VERSION);
         this.encoder = addChildBlock("Encoder", encoder);

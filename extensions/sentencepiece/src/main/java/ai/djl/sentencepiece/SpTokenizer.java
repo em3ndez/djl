@@ -13,8 +13,11 @@
 package ai.djl.sentencepiece;
 
 import ai.djl.modality.nlp.preprocess.Tokenizer;
+import ai.djl.util.Utils;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -50,6 +53,27 @@ public class SpTokenizer implements Tokenizer, AutoCloseable {
         loadModel(modelPath, prefix);
     }
 
+    /**
+     * Creates a SentencePiece Tokenizer from byte array.
+     *
+     * @param serializedModel the serialized model
+     */
+    public SpTokenizer(byte[] serializedModel) {
+        this.processor = SpProcessor.newInstance();
+        processor.loadModelFromBytes(serializedModel);
+    }
+
+    /**
+     * Creates a SentencePiece Tokenizer from inputStream.
+     *
+     * @param is {@link InputStream} of the serialized model
+     * @throws IOException when IO operation fails in loading a resource
+     */
+    public SpTokenizer(InputStream is) throws IOException {
+        this.processor = SpProcessor.newInstance();
+        processor.loadModelFromBytes(Utils.toByteArray(is));
+    }
+
     /** {@inheritDoc} */
     @Override
     public List<String> tokenize(String sentence) {
@@ -59,7 +83,7 @@ public class SpTokenizer implements Tokenizer, AutoCloseable {
     /** {@inheritDoc} */
     @Override
     public String buildSentence(List<String> tokens) {
-        return processor.buildSentence(tokens.toArray(new String[0]));
+        return processor.buildSentence(tokens.toArray(Utils.EMPTY_ARRAY));
     }
 
     /** {@inheritDoc} */
@@ -68,7 +92,12 @@ public class SpTokenizer implements Tokenizer, AutoCloseable {
         processor.close();
     }
 
-    SpProcessor getProcessor() {
+    /**
+     * Get SentencePiece processor.
+     *
+     * @return {@link SpProcessor}
+     */
+    public SpProcessor getProcessor() {
         return processor;
     }
 
@@ -78,13 +107,13 @@ public class SpTokenizer implements Tokenizer, AutoCloseable {
                     "Model path doesn't exist: " + modelPath.toAbsolutePath());
         }
         Path modelDir = modelPath.toAbsolutePath();
+        if (prefix == null || prefix.isEmpty()) {
+            prefix = modelDir.toFile().getName();
+        }
         Path modelFile = findModelFile(modelDir, prefix);
         if (modelFile == null) {
             // TODO: support proto and IOStream model
-            modelFile = findModelFile(modelDir, modelDir.toFile().getName());
-            if (modelFile == null) {
-                throw new FileNotFoundException("No .model found in : " + modelPath);
-            }
+            throw new FileNotFoundException("No .model found in : " + modelPath);
         }
 
         String modelFilePath = modelFile.toString();

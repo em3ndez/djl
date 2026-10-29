@@ -14,13 +14,19 @@ package ai.djl.repository;
 
 import ai.djl.util.Hex;
 import ai.djl.util.Progress;
+import ai.djl.util.TarUtils;
 import ai.djl.util.Utils;
 import ai.djl.util.ZipUtils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
+import java.net.URLDecoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -28,16 +34,10 @@ import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Collections;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipInputStream;
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The {@code AbstractRepository} is the shared base for implementers of the {@link Repository}
@@ -49,10 +49,32 @@ public abstract class AbstractRepository implements Repository {
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractRepository.class);
 
+    protected String name;
+    protected URI uri;
+    protected Map<String, String> arguments;
+
+    protected AbstractRepository(String name, URI uri) {
+        this.name = name;
+        this.uri = uri;
+        arguments = parseQueryString(uri);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public String getName() {
+        return name;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public URI getBaseUri() {
+        return uri;
+    }
+
     /** {@inheritDoc} */
     @Override
     public InputStream openStream(Artifact.Item item, String path) throws IOException {
-        return Files.newInputStream(Paths.get(resolvePath(item, path)));
+        return new BufferedInputStream(Files.newInputStream(Paths.get(resolvePath(item, path))));
     }
 
     /** {@inheritDoc} */
@@ -67,6 +89,76 @@ public abstract class AbstractRepository implements Repository {
         return Paths.get(resolvePath(item, path)).toAbsolutePath();
     }
 
+    /**
+     * Resolves an artifact's own directory inside the cache.
+     *
+     * <p>Contained against the repository's own directory rather than the cache root: the version
+     * and name come from the metadata, and a {@code ..} in either would otherwise collapse onto a
+     * different model's directory in the shared cache. The cache is keyed by MRL, so this does not
+     * isolate repositories from one another.
+     *
+     * @param cacheDir the cache directory
+     * @param artifact the artifact
+     * @return the artifact's directory
+     * @throws IOException if it resolves outside the repository's own directory
+     */
+    static Path resolveArtifactDir(Path cacheDir, Artifact artifact) throws IOException {
+        URI repositoryUri = artifact.getMetadata().getRepositoryUri();
+        URI resourceUri = artifact.getResourceUri();
+        URI relative = repositoryUri.relativize(resourceUri);
+        if (relative.equals(resourceUri)) {
+            // relativize hands back its argument when the result is not a descendant, so a
+            // version or name that left the repository's directory would be re-rooted under it
+            // rather than refused.
+            throw new IOException("Artifact resolves outside the repository: " + resourceUri);
+        }
+        Path mrlDir = resolveInside(cacheDir, repositoryUri.getPath());
+        Path dir = resolveInside(mrlDir, relative.getPath());
+        if (dir.equals(mrlDir.resolve("metadata.json"))) {
+            // Naming the repository's own cached metadata makes prepare() treat the artifact as
+            // downloaded and the model directory resolve to its parent. Only that file: a
+            // single-file artifact resolves to a regular file legitimately.
+            throw new IOException("Artifact resolves to the repository metadata: " + resourceUri);
+        }
+        if (dir.equals(mrlDir) && !(artifact.getMetadata() instanceof Metadata.MatchAllMetadata)) {
+            // A metadata-backed repository caches its own metadata.json in this directory, and an
+            // item of an artifact resolving onto it can replace that. A synthesized repository has
+            // no cached metadata and resolves here legitimately, with no version or name.
+            throw new IOException(
+                    "Artifact resolves to the repository directory, not inside it: "
+                            + repositoryUri);
+        }
+        return dir;
+    }
+
+    /**
+     * Resolves a name that came from artifact metadata against a directory DJL chose, and refuses
+     * one that escapes it.
+     *
+     * <p>Names in a {@code metadata.json} are data: an absolute name, or one carrying {@code ..}
+     * segments, otherwise places the read or the write outside the cache. This is the containment
+     * {@link ZipUtils} already applies to the entries inside an archive, applied to the name that
+     * decides where the archive lands.
+     *
+     * @param dir the directory the name must resolve inside
+     * @param name the name from the artifact metadata
+     * @return the resolved path
+     * @throws IOException if the name resolves outside {@code dir}
+     */
+    static Path resolveInside(Path dir, String name) throws IOException {
+        if (name == null) {
+            throw new IOException("Artifact item has no name, cannot resolve it in: " + dir);
+        }
+        Path resolved = dir.resolve(name);
+        // The rule is Utils.isInsideDirectory. The override Utils.resolveModelFile honours is
+        // deliberately not reused: this contains the cache and the download directory, not a file
+        // that a model argument named.
+        if (!Utils.isInsideDirectory(dir, resolved)) {
+            throw new IOException("Invalid artifact name, resolves outside " + dir + ": " + name);
+        }
+        return resolved.toAbsolutePath().normalize();
+    }
+
     protected URI resolvePath(Artifact.Item item, String path) throws IOException {
         Artifact artifact = item.getArtifact();
         URI artifactUri = artifact.getResourceUri();
@@ -75,25 +167,43 @@ public abstract class AbstractRepository implements Repository {
         // Resolve cached item
         if (itemUri != null && URI.create(itemUri).isAbsolute() || isRemote()) {
             Path cacheDir = getCacheDirectory();
-            Path resourceDir = cacheDir.resolve(artifactUri.getPath());
+            Path resourceDir = resolveArtifactDir(cacheDir, artifact);
             String type = item.getType();
             String fileName = item.getName();
             Path cachedFile;
             if ("dir".equals(type)) {
                 if (!fileName.isEmpty()) {
-                    cachedFile = resourceDir.resolve(fileName);
+                    cachedFile = resolveInside(resourceDir, fileName);
                 } else {
                     cachedFile = resourceDir;
                 }
-                return cachedFile.resolve(path).toUri();
+                // Contained like the leaf: path is documented as being within the cached
+                // directory.
+                return resolveInside(cachedFile, path).toUri();
             } else {
-                return resourceDir.resolve(fileName).toUri();
+                return resolveInside(resourceDir, fileName).toUri();
             }
         }
 
         // Resolve metadata item
         String uriSuffix = itemUri != null ? itemUri : item.getName();
-        return getBaseUri().resolve(artifactUri.resolve(uriSuffix));
+        URI base = getBaseUri();
+        URI resolved = base.resolve(artifactUri.resolve(uriSuffix));
+        // equalsIgnoreCase for the same reason as in download(): the scheme keeps the case it was
+        // written in, and the readers downstream do not.
+        if ("file".equalsIgnoreCase(resolved.getScheme())) {
+            // Every caller reads this as a local path and copies it in as a model file, and both
+            // the item uri and its name come from the metadata.
+            if (!"file".equalsIgnoreCase(base.getScheme())) {
+                throw new IOException("Invalid artifact item, names a local file: " + uriSuffix);
+            }
+            Path baseDir = Paths.get(base).toAbsolutePath().normalize();
+            if (!Utils.isInsideDirectory(baseDir, Paths.get(resolved))) {
+                throw new IOException(
+                        "Invalid artifact item, resolves outside " + baseDir + ": " + uriSuffix);
+            }
+        }
+        return resolved;
     }
 
     /** {@inheritDoc} */
@@ -111,7 +221,7 @@ public abstract class AbstractRepository implements Repository {
 
         Path parentDir = resourceDir.toAbsolutePath().getParent();
         if (parentDir == null) {
-            throw new AssertionError("Parent path should never be null: " + resourceDir.toString());
+            throw new AssertionError("Parent path should never be null: " + resourceDir);
         }
 
         Files.createDirectories(parentDir);
@@ -145,15 +255,16 @@ public abstract class AbstractRepository implements Repository {
         if (Files.notExists(dir)) {
             Files.createDirectories(dir);
         } else if (!Files.isDirectory(dir)) {
-            throw new IOException("Failed initialize cache directory: " + dir.toString());
+            throw new IOException("Failed initialize cache directory: " + dir);
         }
         return dir;
     }
 
     /** {@inheritDoc} */
     @Override
-    public List<MRL> getResources() {
-        return Collections.emptyList();
+    public void addResource(MRL mrl) {
+        throw new IllegalArgumentException(
+                getClass().getSimpleName() + " doesn't support addResource.");
     }
 
     protected void download(Path tmp, URI baseUri, Artifact.Item item, Progress progress)
@@ -162,15 +273,43 @@ public abstract class AbstractRepository implements Repository {
         if (!fileUri.isAbsolute()) {
             fileUri = getBaseUri().resolve(baseUri).resolve(fileUri);
         }
+        // An allowlist, and matched case-insensitively the way Utils.openUrl matches the protocol:
+        // URI.getScheme() keeps the case it was written in while URL.getProtocol() lower cases it,
+        // so a FILE: item would pass a case-sensitive test here and still reach openUrl as a local
+        // read.
+        String scheme = fileUri.getScheme();
+        if ("file".equalsIgnoreCase(scheme)) {
+            // Read below and saved as a model file, so a local read is only allowed when the
+            // repository itself is local, and only from inside it.
+            URI repoBase = getBaseUri();
+            if (!"file".equalsIgnoreCase(repoBase.getScheme())) {
+                throw new IOException(
+                        "Invalid artifact item uri, names a local file: " + item.getUri());
+            }
+            Path baseDir = Paths.get(repoBase).toAbsolutePath().normalize();
+            if (!Utils.isInsideDirectory(baseDir, Paths.get(fileUri))) {
+                throw new IOException(
+                        "Invalid artifact item uri, resolves outside "
+                                + baseDir
+                                + ": "
+                                + item.getUri());
+            }
+        } else if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            // Every other scheme openUrl accepts is a local read that cannot be contained here: a
+            // jar: URL nests its own, so the path that decides what is read is not this URI's.
+            throw new IOException(
+                    "Invalid artifact item uri, unsupported scheme: " + item.getUri());
+        }
 
         logger.debug("Downloading artifact: {} ...", fileUri);
-        try (InputStream is = fileUri.toURL().openStream()) {
-            save(is, tmp, baseUri, item, progress);
+        // The artifact URI comes from the repository metadata and may be absolute, so route it
+        // through Utils.openUrl to apply the same URL handling as the rest of the download paths.
+        try (InputStream is = Utils.openUrl(fileUri.toURL())) {
+            save(is, tmp, item, progress);
         }
     }
 
-    protected void save(
-            InputStream is, Path tmp, URI baseUri, Artifact.Item item, Progress progress)
+    protected void save(InputStream is, Path tmp, Artifact.Item item, Progress progress)
             throws IOException {
         ProgressInputStream pis = new ProgressInputStream(is, progress);
         String fileName = item.getName();
@@ -179,7 +318,7 @@ public abstract class AbstractRepository implements Repository {
             Path dir;
             if (!fileName.isEmpty()) {
                 // honer the name set in metadata.json
-                dir = tmp.resolve(fileName);
+                dir = resolveInside(tmp, fileName);
                 Files.createDirectories(dir);
             } else {
                 dir = tmp;
@@ -187,14 +326,14 @@ public abstract class AbstractRepository implements Repository {
             if ("zip".equals(extension)) {
                 ZipUtils.unzip(pis, dir);
             } else if ("tgz".equals(extension)) {
-                untar(pis, dir, true);
+                TarUtils.untar(pis, dir, true);
             } else if ("tar".equals(extension)) {
-                untar(pis, dir, false);
+                TarUtils.untar(pis, dir, false);
             } else {
                 throw new IOException("File type is not supported: " + extension);
             }
         } else {
-            Path file = tmp.resolve(fileName);
+            Path file = resolveInside(tmp, fileName);
             if ("zip".equals(extension)) {
                 ZipInputStream zis = new ZipInputStream(pis);
                 zis.getNextEntry();
@@ -208,42 +347,24 @@ public abstract class AbstractRepository implements Repository {
         pis.validateChecksum(item);
     }
 
-    private void untar(InputStream is, Path dir, boolean gzip) throws IOException {
-        InputStream bis;
-        if (gzip) {
-            bis = new GzipCompressorInputStream(new BufferedInputStream(is));
-        } else {
-            bis = new BufferedInputStream(is);
-        }
-        try (TarArchiveInputStream tis = new TarArchiveInputStream(bis)) {
-            TarArchiveEntry entry;
-            while ((entry = tis.getNextTarEntry()) != null) {
-                String entryName = entry.getName();
-                if (entryName.contains("..")) {
-                    throw new IOException("Malicious zip entry: " + entryName);
-                }
-                Path file = dir.resolve(entryName).toAbsolutePath();
-                if (entry.isDirectory()) {
-                    Files.createDirectories(file);
-                } else {
-                    Path parentFile = file.getParent();
-                    if (parentFile == null) {
-                        throw new AssertionError(
-                                "Parent path should never be null: " + file.toString());
+    private static Map<String, String> parseQueryString(URI uri) {
+        try {
+            Map<String, String> map = new ConcurrentHashMap<>();
+            String queryString = uri.getQuery();
+            if (queryString != null && !queryString.isEmpty()) {
+                String[] pairs = uri.getQuery().split("&");
+                for (String pair : pairs) {
+                    String[] tokens = pair.split("=", 2);
+                    if (tokens.length > 1) {
+                        String key = URLDecoder.decode(tokens[0], "UTF-8");
+                        String value = URLDecoder.decode(tokens[1], "UTF-8");
+                        map.put(key, value);
                     }
-                    Files.createDirectories(parentFile);
-                    Files.copy(tis, file, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
-        }
-    }
-
-    protected static String md5hash(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            return Hex.toHexString(md.digest(input.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new AssertionError("MD5 algorithm not found.", e);
+            return map;
+        } catch (UnsupportedEncodingException e) {
+            throw new AssertionError("Should not happen.", e);
         }
     }
 

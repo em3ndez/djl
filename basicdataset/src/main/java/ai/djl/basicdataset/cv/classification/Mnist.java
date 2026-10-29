@@ -23,32 +23,38 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.translate.Pipeline;
 import ai.djl.util.Progress;
 import ai.djl.util.Utils;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.Map;
 
 /**
  * MNIST handwritten digits dataset from http://yann.lecun.com/exdb/mnist.
  *
- * <p>Each sample is an image (in 3-D NDArray) with shape (28, 28, 1).
+ * <p>Each sample is a grayscale image (in 3-D NDArray) with shape (28, 28, 1).
+ *
+ * <p>It is a common starting dataset because it is small and can train within minutes. However, it
+ * is an overly easy task that even poor models can still perform very well on. Instead, consider
+ * {@link FashionMnist} which offers a comparable speed but a more reasonable difficulty task.
  */
 public final class Mnist extends ArrayDataset {
+
+    private static final String ARTIFACT_ID = "mnist";
+    private static final String VERSION = "1.0";
 
     public static final int IMAGE_WIDTH = 28;
     public static final int IMAGE_HEIGHT = 28;
     public static final int NUM_CLASSES = 10;
 
-    private static final String ARTIFACT_ID = "mnist";
-
     private NDManager manager;
     private Usage usage;
 
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     private Mnist(Builder builder) {
@@ -56,8 +62,7 @@ public final class Mnist extends ArrayDataset {
         this.manager = builder.manager;
         this.manager.setName("mnist");
         this.usage = builder.usage;
-        MRL mrl = MRL.dataset(CV.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.0");
+        mrl = builder.getMrl();
     }
 
     /**
@@ -76,8 +81,8 @@ public final class Mnist extends ArrayDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
 
         Map<String, Artifact.Item> map = artifact.getFiles();
         Artifact.Item imageItem;
@@ -101,28 +106,28 @@ public final class Mnist extends ArrayDataset {
     }
 
     private NDArray readData(Artifact.Item item, long length) throws IOException {
-        try (InputStream is = resource.getRepository().openStream(item, null)) {
+        try (InputStream is = mrl.getRepository().openStream(item, null)) {
             if (is.skip(16) != 16) {
                 throw new AssertionError("Failed skip data.");
             }
 
             byte[] buf = Utils.toByteArray(is);
-            try (NDArray array = manager.create(new Shape(length, 28, 28, 1), DataType.UINT8)) {
-                array.set(buf);
+            try (NDArray array =
+                    manager.create(
+                            ByteBuffer.wrap(buf), new Shape(length, 28, 28, 1), DataType.UINT8)) {
                 return array.toType(DataType.FLOAT32, false);
             }
         }
     }
 
     private NDArray readLabel(Artifact.Item item) throws IOException {
-        try (InputStream is = resource.getRepository().openStream(item, null)) {
+        try (InputStream is = mrl.getRepository().openStream(item, null)) {
             if (is.skip(8) != 8) {
                 throw new AssertionError("Failed skip data.");
             }
-
             byte[] buf = Utils.toByteArray(is);
-            try (NDArray array = manager.create(new Shape(buf.length), DataType.UINT8)) {
-                array.set(buf);
+            try (NDArray array =
+                    manager.create(ByteBuffer.wrap(buf), new Shape(buf.length), DataType.UINT8)) {
                 return array.toType(DataType.FLOAT32, false);
             }
         }
@@ -222,6 +227,10 @@ public final class Mnist extends ArrayDataset {
          */
         public Mnist build() {
             return new Mnist(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(CV.ANY, groupId, artifactId, VERSION);
         }
     }
 }

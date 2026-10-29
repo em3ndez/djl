@@ -17,16 +17,17 @@ import ai.djl.modality.cv.output.DetectedObjects;
 import ai.djl.modality.cv.output.Rectangle;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.DataType;
+import ai.djl.translate.ArgumentsUtil;
 import ai.djl.translate.TranslatorContext;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.PriorityQueue;
 
 /**
  * A translator for YoloV5 models. This was tested with ONNX exported Yolo models. For details check
- * here: https://github.com/ultralytics/yolov5
+ * <a href="https://github.com/ultralytics/yolov5">here</a>
  */
 public class YoloV5Translator extends ObjectDetectionTranslator {
 
@@ -66,94 +67,70 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
         return builder;
     }
 
-    protected double boxIntersection(Rectangle a, Rectangle b) {
-        double w =
-                overlap(
-                        (a.getX() * 2 + a.getWidth()) / 2,
-                        a.getWidth(),
-                        (b.getX() * 2 + b.getWidth()) / 2,
-                        b.getWidth());
-        double h =
-                overlap(
-                        (a.getY() * 2 + a.getHeight()) / 2,
-                        a.getHeight(),
-                        (b.getY() * 2 + b.getHeight()) / 2,
-                        b.getHeight());
-        if (w < 0 || h < 0) {
-            return 0;
-        }
-        return w * h;
-    }
-
-    protected double boxIou(Rectangle a, Rectangle b) {
-        return boxIntersection(a, b) / boxUnion(a, b);
-    }
-
-    protected double boxUnion(Rectangle a, Rectangle b) {
-        double i = boxIntersection(a, b);
-        return (a.getWidth()) * (a.getHeight()) + (b.getWidth()) * (b.getHeight()) - i;
-    }
-
-    protected DetectedObjects nms(List<IntermediateResult> list) {
+    protected DetectedObjects nms(
+            int imageWidth,
+            int imageHeight,
+            List<Rectangle> boxes,
+            List<Integer> classIds,
+            List<Float> scores) {
         List<String> retClasses = new ArrayList<>();
         List<Double> retProbs = new ArrayList<>();
         List<BoundingBox> retBB = new ArrayList<>();
 
-        for (int k = 0; k < classes.size(); k++) {
-            // 1.find max confidence per class
-            PriorityQueue<IntermediateResult> pq =
-                    new PriorityQueue<>(
-                            50,
-                            (lhs, rhs) -> {
-                                // Intentionally reversed to put high confidence at the head of the
-                                // queue.
-                                return Double.compare(rhs.getConfidence(), lhs.getConfidence());
-                            });
-
-            for (IntermediateResult intermediateResult : list) {
-                if (intermediateResult.getDetectedClass() == k) {
-                    pq.add(intermediateResult);
+        for (int classId = 0; classId < classes.size(); classId++) {
+            List<Rectangle> r = new ArrayList<>();
+            List<Double> s = new ArrayList<>();
+            List<Integer> map = new ArrayList<>();
+            for (int j = 0; j < classIds.size(); ++j) {
+                if (classIds.get(j) == classId) {
+                    r.add(boxes.get(j));
+                    s.add(scores.get(j).doubleValue());
+                    map.add(j);
                 }
             }
-
-            // 2.do non maximum suppression
-            while (pq.size() > 0) {
-                // insert detection with max confidence
-                IntermediateResult[] a = new IntermediateResult[pq.size()];
-                IntermediateResult[] detections = pq.toArray(a);
-                Rectangle rec = detections[0].getLocation();
-                retClasses.add(detections[0].id);
-                retProbs.add(detections[0].confidence);
-                retBB.add(new Rectangle(rec.getX(), rec.getY(), rec.getWidth(), rec.getHeight()));
-                pq.clear();
-                for (int j = 1; j < detections.length; j++) {
-                    IntermediateResult detection = detections[j];
-                    Rectangle location = detection.getLocation();
-                    if (boxIou(rec, location) < nmsThreshold) {
-                        pq.add(detection);
-                    }
+            if (r.isEmpty()) {
+                continue;
+            }
+            List<Integer> nms = Rectangle.nms(r, s, nmsThreshold);
+            for (int index : nms) {
+                int pos = map.get(index);
+                int id = classIds.get(pos);
+                retClasses.add(classes.get(id));
+                retProbs.add(scores.get(pos).doubleValue());
+                Rectangle rect = boxes.get(pos);
+                if (removePadding) {
+                    int padW = (width - imageWidth) / 2;
+                    int padH = (height - imageHeight) / 2;
+                    rect =
+                            new Rectangle(
+                                    (rect.getX() - padW) / imageWidth,
+                                    (rect.getY() - padH) / imageHeight,
+                                    rect.getWidth() / imageWidth,
+                                    rect.getHeight() / imageHeight);
+                } else if (applyRatio) {
+                    rect =
+                            new Rectangle(
+                                    rect.getX() / width,
+                                    rect.getY() / height,
+                                    rect.getWidth() / width,
+                                    rect.getHeight() / height);
                 }
+                retBB.add(rect);
             }
         }
         return new DetectedObjects(retClasses, retProbs, retBB);
     }
 
-    protected double overlap(double x1, double w1, double x2, double w2) {
-        double l1 = x1 - w1 / 2;
-        double l2 = x2 - w2 / 2;
-        double left = Math.max(l1, l2);
-        double r1 = x1 + w1 / 2;
-        double r2 = x2 + w2 / 2;
-        double right = Math.min(r1, r2);
-        return right - left;
-    }
-
-    private DetectedObjects processFromBoxOutput(NDList list) {
+    protected DetectedObjects processFromBoxOutput(int imageWidth, int imageHeight, NDList list) {
         float[] flattened = list.get(0).toFloatArray();
-        ArrayList<IntermediateResult> intermediateResults = new ArrayList<>();
         int sizeClasses = classes.size();
         int stride = 5 + sizeClasses;
         int size = flattened.length / stride;
+
+        ArrayList<Rectangle> boxes = new ArrayList<>();
+        ArrayList<Float> scores = new ArrayList<>();
+        ArrayList<Integer> classIds = new ArrayList<>();
+
         for (int i = 0; i < size; i++) {
             int indexBase = i * stride;
             float maxClass = 0;
@@ -172,11 +149,12 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
                 float h = flattened[indexBase + 3];
                 Rectangle rect =
                         new Rectangle(Math.max(0, xPos - w / 2), Math.max(0, yPos - h / 2), w, h);
-                intermediateResults.add(
-                        new IntermediateResult(classes.get(maxIndex), score, maxIndex, rect));
+                boxes.add(rect);
+                scores.add(score);
+                classIds.add(maxIndex);
             }
         }
-        return nms(intermediateResults);
+        return nms(imageWidth, imageHeight, boxes, classIds, scores);
     }
 
     private DetectedObjects processFromDetectOutput() {
@@ -187,6 +165,8 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
     /** {@inheritDoc} */
     @Override
     public DetectedObjects processOutput(TranslatorContext ctx, NDList list) {
+        int imageWidth = (Integer) ctx.getAttachment("width");
+        int imageHeight = (Integer) ctx.getAttachment("height");
         switch (yoloOutputLayerType) {
             case DETECT:
                 return processFromDetectOutput();
@@ -194,11 +174,11 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
                 if (list.get(0).getShape().dimension() > 2) {
                     return processFromDetectOutput();
                 } else {
-                    return processFromBoxOutput(list);
+                    return processFromBoxOutput(imageWidth, imageHeight, list);
                 }
             case BOX:
             default:
-                return processFromBoxOutput(list);
+                return processFromBoxOutput(imageWidth, imageHeight, list);
         }
     }
 
@@ -210,7 +190,7 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
     }
 
     /** The builder for {@link YoloV5Translator}. */
-    public static class Builder extends ObjectDetectionBuilder<YoloV5Translator.Builder> {
+    public static class Builder extends ObjectDetectionBuilder<Builder> {
 
         YoloOutputType outputType = YoloOutputType.AUTO;
         float nmsThreshold = 0.4f;
@@ -247,9 +227,9 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
         @Override
         protected void configPostProcess(Map<String, ?> arguments) {
             super.configPostProcess(arguments);
-            String type = getStringValue(arguments, "outputType", "AUTO");
+            String type = ArgumentsUtil.stringValue(arguments, "outputType", "AUTO");
             outputType = YoloOutputType.valueOf(type.toUpperCase(Locale.ENGLISH));
-            nmsThreshold = getFloatValue(arguments, "nmsThreshold", 0.4f);
+            nmsThreshold = ArgumentsUtil.floatValue(arguments, "nmsThreshold", 0.4f);
         }
 
         /**
@@ -265,51 +245,6 @@ public class YoloV5Translator extends ObjectDetectionTranslator {
             }
             validate();
             return new YoloV5Translator(this);
-        }
-    }
-
-    private static final class IntermediateResult {
-
-        /**
-         * A sortable score for how good the recognition is relative to others. Higher should be
-         * better.
-         */
-        private double confidence;
-
-        /** Display name for the recognition. */
-        private int detectedClass;
-
-        /**
-         * A unique identifier for what has been recognized. Specific to the class, not the instance
-         * of the object.
-         */
-        private String id;
-
-        /** Optional location within the source image for the location of the recognized object. */
-        private Rectangle location;
-
-        IntermediateResult(String id, double confidence, int detectedClass, Rectangle location) {
-            this.confidence = confidence;
-            this.id = id;
-            this.detectedClass = detectedClass;
-            this.location = location;
-        }
-
-        public double getConfidence() {
-            return confidence;
-        }
-
-        public int getDetectedClass() {
-            return detectedClass;
-        }
-
-        public String getId() {
-            return id;
-        }
-
-        public Rectangle getLocation() {
-            return new Rectangle(
-                    location.getX(), location.getY(), location.getWidth(), location.getHeight());
         }
     }
 }

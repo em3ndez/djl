@@ -21,6 +21,7 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Parameter;
+import ai.djl.nn.UninitializedParameterException;
 import ai.djl.training.dataset.Batch;
 import ai.djl.training.dataset.Dataset;
 import ai.djl.training.evaluator.Evaluator;
@@ -29,6 +30,10 @@ import ai.djl.training.listener.EvaluatorTrainingListener;
 import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.translate.TranslateException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,8 +41,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The {@code Trainer} interface provides a session for model training.
@@ -49,18 +52,17 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li><a
- *       href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/tutorial/02_train_your_first_model.ipynb">Training
+ *       href="https://docs.djl.ai/master/docs/demos/jupyter/tutorial/02_train_your_first_model.html">Training
  *       your first model</a>
  *   <li><a
- *       href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/transfer_learning_on_cifar10.ipynb">Training
+ *       href="https://docs.djl.ai/master/docs/demos/jupyter/transfer_learning_on_cifar10.html">Training
  *       using transfer learning</a>
- *   <li><a
- *       href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/load_mxnet_model.ipynb">Inference
+ *   <li><a href="https://docs.djl.ai/master/docs/demos/jupyter/load_mxnet_model.html">Inference
  *       with an MXNet model</a>
  * </ul>
  *
- * @see <a href="http://docs.djl.ai/docs/development/memory_management.html">The guide on memory
- *     management</a>
+ * @see <a href="https://docs.djl.ai/master/docs/development/memory_management.html">The guide on
+ *     memory management</a>
  */
 public class Trainer implements AutoCloseable {
 
@@ -85,6 +87,7 @@ public class Trainer implements AutoCloseable {
      * @param model the model the trainer will train on
      * @param trainingConfig the configuration used by the trainer
      */
+    @SuppressWarnings("this-escape")
     public Trainer(Model model, TrainingConfig trainingConfig) {
         this.model = model;
         manager = model.getNDManager().newSubManager();
@@ -119,7 +122,20 @@ public class Trainer implements AutoCloseable {
                 .forEach(
                         pair -> {
                             for (Device device : devices) {
-                                parameterStore.getValue(pair.getValue(), device, true);
+                                try {
+                                    parameterStore.getValue(pair.getValue(), device, true);
+                                } catch (UninitializedParameterException e) {
+                                    throw new IllegalStateException(
+                                            "Failed to initialize parameter: "
+                                                    + pair.getKey()
+                                                    + ".\n"
+                                                    + "If you are defining a Block extending"
+                                                    + " AbstractBlock, check that you are"
+                                                    + " initializing all child blocks as part of"
+                                                    + " the overload for"
+                                                    + " AbstractBlock.initializeChildBlocks().",
+                                            e);
+                                }
                             }
                         });
     }
@@ -265,7 +281,7 @@ public class Trainer implements AutoCloseable {
      *
      * @param listenerConsumer a consumer that executes the method
      */
-    public void notifyListeners(Consumer<TrainingListener> listenerConsumer) {
+    public final void notifyListeners(Consumer<TrainingListener> listenerConsumer) {
         listeners.forEach(listenerConsumer);
     }
 
@@ -324,10 +340,7 @@ public class Trainer implements AutoCloseable {
      */
     private void checkGradients() {
         List<NDArray> grads = new ArrayList<>();
-        model.getBlock()
-                .getParameters()
-                .values()
-                .stream()
+        model.getBlock().getParameters().values().stream()
                 .filter(Parameter::requiresGradient)
                 .forEach(
                         param ->
@@ -336,28 +349,19 @@ public class Trainer implements AutoCloseable {
                                                 .getValue(param, devices[0], true)
                                                 .getGradient()));
 
-        NDList list = new NDList(grads.stream().map(NDArray::sum).toArray(NDArray[]::new));
-        NDArray gradSum = NDArrays.stack(list);
-        list.close();
+        try (NDManager scoped = manager.newSubManager()) {
+            scoped.tempAttachAll(new NDList(grads));
+            NDList list = new NDList(grads.stream().map(NDArray::sum).toArray(NDArray[]::new));
+            float gradSum = NDArrays.stack(list).sum().getFloat();
 
-        NDArray array = gradSum.sum();
+            if (gradSum == 0f) {
+                throw new IllegalStateException(
+                        "Gradient values are all zeros, please call gradientCollector.backward() on"
+                                + "your target NDArray (usually loss), before calling step() ");
+            }
 
-        float[] sums = array.toFloatArray();
-
-        array.close();
-        gradSum.close();
-
-        float sum = 0f;
-        for (float num : sums) {
-            sum += num;
+            gradientsChecked = true;
         }
-        if (sum == 0f) {
-            throw new IllegalStateException(
-                    "Gradient values are all zeros, please call gradientCollector.backward() on"
-                            + "your target NDArray (usually loss), before calling step() ");
-        }
-
-        gradientsChecked = true;
     }
 
     /**

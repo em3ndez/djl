@@ -12,9 +12,14 @@
  */
 package ai.djl.inference;
 
+import ai.djl.Device;
 import ai.djl.Model;
-import ai.djl.engine.EngineException;
+import ai.djl.inference.streaming.StreamingBlock;
+import ai.djl.inference.streaming.StreamingTranslator;
+import ai.djl.inference.streaming.StreamingTranslator.StreamOutput;
+import ai.djl.metric.Dimension;
 import ai.djl.metric.Metrics;
+import ai.djl.metric.Unit;
 import ai.djl.ndarray.LazyNDArray;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -25,13 +30,15 @@ import ai.djl.translate.Batchifier;
 import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
 import ai.djl.translate.TranslatorContext;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * The {@code Predictor} interface provides a session for model inference.
@@ -54,13 +61,12 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li><a
- *       href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/tutorial/03_image_classification_with_your_model.ipynb">Inference
+ *       href="https://docs.djl.ai/master/docs/demos/jupyter/tutorial/03_image_classification_with_your_model.html">Inference
  *       with a custom trained model</a>
  *   <li><a
- *       href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/object_detection_with_model_zoo.ipynb">Inference
+ *       href="https://docs.djl.ai/master/docs/demos/jupyter/object_detection_with_model_zoo.html">Inference
  *       with a model zoo model</a>
- *   <li><a
- *       href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/load_mxnet_model.ipynb">Inference
+ *   <li><a href="https://docs.djl.ai/master/docs/demos/jupyter/load_mxnet_model.html">Inference
  *       with an MXNet model</a>
  * </ul>
  *
@@ -68,26 +74,29 @@ import org.slf4j.LoggerFactory;
  * @param <O> the output type
  * @see Model
  * @see Translator
- * @see <a href="http://docs.djl.ai/docs/development/memory_management.html">The guide on memory
- *     management</a>
+ * @see <a href="https://docs.djl.ai/master/docs/development/memory_management.html">The guide on
+ *     memory management</a>
  * @see <a
  *     href="https://github.com/deepjavalibrary/djl/blob/master/examples/docs/multithread_inference.md">The
  *     guide on running multi-threaded inference</a>
- * @see <a href="http://docs.djl.ai/docs/development/inference_performance_optimization.html">The
+ * @see <a
+ *     href="https://docs.djl.ai/master/docs/development/inference_performance_optimization.html">The
  *     guide on inference performance optimization</a>
  */
 public class Predictor<I, O> implements AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(Predictor.class);
-    private Translator<I, O> translator;
-    private long timestamp;
 
-    private boolean prepared;
-    private Model model;
-    private NDManager manager;
-    Metrics metrics;
+    protected Translator<I, O> translator;
+    protected long timestamp;
+
+    protected boolean prepared;
+    protected Model model;
+    protected NDManager manager;
+    protected Metrics metrics;
     protected Block block;
     protected ParameterStore parameterStore;
+    protected Dimension dimension;
 
     /**
      * Creates a new instance of {@code BasePredictor} with the given {@link Model} and {@link
@@ -95,15 +104,22 @@ public class Predictor<I, O> implements AutoCloseable {
      *
      * @param model the model on which the predictions are based
      * @param translator the translator to be used
-     * @param copy whether to copy the parameters to the parameter store
+     * @param device the device for prediction
+     * @param copy whether to copy the parameters to the parameter store. If the device changes, it
+     *     will copy regardless
      */
-    public Predictor(Model model, Translator<I, O> translator, boolean copy) {
+    public Predictor(Model model, Translator<I, O> translator, Device device, boolean copy) {
+        if (!device.equals(model.getNDManager().getDevice())) {
+            // Always copy during device changes
+            copy = true;
+        }
         this.model = model;
-        this.manager = model.getNDManager().newSubManager();
+        this.manager = model.getNDManager().newSubManager(device);
         this.manager.setName("predictor");
         this.translator = translator;
         block = model.getBlock();
         parameterStore = new ParameterStore(manager, copy);
+        dimension = new Dimension("Model", model.getProperty("metric_dimension", "model"));
     }
 
     /**
@@ -113,13 +129,24 @@ public class Predictor<I, O> implements AutoCloseable {
      * @return the output object defined by the user
      * @throws TranslateException if an error occurs during prediction
      */
-    @SuppressWarnings("PMD.AvoidRethrowingException")
     public O predict(I input) throws TranslateException {
         return batchPredict(Collections.singletonList(input)).get(0);
     }
 
-    private NDList predict(NDList ndList) {
+    /**
+     * Predicts an item for inference.
+     *
+     * @param ctx the context for the {@code Predictor}.
+     * @param ndList the input {@code NDList}
+     * @return the output {@code NDList}
+     * @throws TranslateException if an error occurs during prediction
+     */
+    protected NDList predictInternal(TranslatorContext ctx, NDList ndList)
+            throws TranslateException {
         logger.trace("Predictor input data: {}", ndList);
+        if (ndList.isEmpty()) {
+            return new NDList();
+        }
         return block.forward(parameterStore, ndList, false);
     }
 
@@ -132,47 +159,125 @@ public class Predictor<I, O> implements AutoCloseable {
      */
     @SuppressWarnings({"PMD.AvoidRethrowingException", "PMD.IdenticalCatchBranches"})
     public List<O> batchPredict(List<I> inputs) throws TranslateException {
-        long begin = System.nanoTime();
-        try (PredictorContext context = new PredictorContext()) {
+        try (PredictorContext context = new PredictorContext(model, manager, metrics)) {
             if (!prepared) {
-                translator.prepare(manager, model);
+                translator.prepare(context);
                 prepared = true;
             }
-            Batchifier batchifier = translator.getBatchifier();
-            if (batchifier == null) {
+            if (translator.getBatchifier() == null) {
                 List<O> ret = new ArrayList<>(inputs.size());
                 for (I input : inputs) {
                     timestamp = System.nanoTime();
-                    begin = timestamp;
+                    long begin = timestamp;
                     NDList ndList = translator.processInput(context, input);
-                    preprocessEnd(ndList);
+                    preprocessEnd(ndList, 1);
 
-                    NDList result = predict(ndList);
-                    predictEnd(result);
+                    NDList result = predictInternal(context, ndList);
+                    predictEnd(result, 1);
 
                     ret.add(translator.processOutput(context, result));
-                    postProcessEnd(begin);
+                    postProcessEnd(begin, 1);
                 }
                 return ret;
             }
 
+            int batchSize = inputs.size();
+
             timestamp = System.nanoTime();
-            NDList inputBatch = processInputs(context, inputs);
-            preprocessEnd(inputBatch);
+            long begin = timestamp;
+            NDList ndList = translator.batchProcessInput(context, inputs);
+            preprocessEnd(ndList, batchSize);
 
-            NDList result = predict(inputBatch);
-            predictEnd(result);
+            NDList result = predictInternal(context, ndList);
+            predictEnd(result, batchSize);
 
-            List<O> ret = processOutputs(context, result);
-            postProcessEnd(begin);
+            List<O> ret = translator.batchProcessOutput(context, result);
+            postProcessEnd(begin, batchSize);
             return ret;
-        } catch (EngineException e) {
-            throw new TranslateException(e);
-        } catch (RuntimeException e) {
+        } catch (TranslateException e) {
             throw e;
         } catch (Exception e) {
             throw new TranslateException(e);
         }
+    }
+
+    /**
+     * Predicts an item for inference.
+     *
+     * @param input the input
+     * @return the output object defined by the user
+     * @throws TranslateException if an error occurs during prediction
+     */
+    @SuppressWarnings({"PMD.AvoidRethrowingException", "PMD.IdenticalCatchBranches"})
+    public StreamOutput<O> streamingPredict(I input) throws TranslateException {
+
+        String streamingSupported = streamingSupportError();
+        if (streamingSupported != null) {
+            throw new IllegalStateException(streamingSupported);
+        }
+
+        StreamingBlock streamingBlock = (StreamingBlock) block;
+        StreamingTranslator<I, O> streamingTranslator = (StreamingTranslator<I, O>) translator;
+
+        try {
+            PredictorContext context = new PredictorContext(model, manager, metrics);
+            if (!prepared) {
+                translator.prepare(context);
+                prepared = true;
+            }
+            Batchifier batchifier = translator.getBatchifier();
+            if (batchifier == null) {
+                NDList ndList = translator.processInput(context, input);
+
+                return streamingTranslator.processStreamOutput(
+                        context,
+                        streamingBlock
+                                .forwardStream(parameterStore, ndList, false)
+                                .onClose(context::close));
+            }
+
+            // For the batched case, need to create singleton batch and unbatchify singleton
+            NDList inputBatch = processInputs(context, Collections.singletonList(input));
+            return streamingTranslator.processStreamOutput(
+                    context,
+                    streamingBlock
+                            .forwardStream(parameterStore, inputBatch, false)
+                            .map(
+                                    result -> {
+                                        NDList[] unbatched =
+                                                translator.getBatchifier().unbatchify(result);
+                                        if (unbatched.length != 1) {
+                                            throw new IllegalStateException(
+                                                    "Unexpected number of outputs from model");
+                                        }
+                                        return unbatched[0];
+                                    })
+                            .onClose(context::close));
+
+        } catch (TranslateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new TranslateException(e);
+        }
+    }
+
+    /**
+     * Returns true if streaming is supported by the predictor, block, and translator.
+     *
+     * @return true if streaming is supported by the predictor, block, and translator
+     */
+    public boolean supportsStreaming() {
+        return streamingSupportError() == null;
+    }
+
+    private String streamingSupportError() {
+        if (!(block instanceof StreamingBlock)) {
+            return "streamingPredict() can only be called with a StreamingBlock";
+        }
+        if (!(translator instanceof StreamingTranslator)) {
+            return "streamingPredict() can only be called with a StreamingTranslator";
+        }
+        return null;
     }
 
     /**
@@ -202,43 +307,34 @@ public class Predictor<I, O> implements AutoCloseable {
         return translator.getBatchifier().batchify(preprocessed);
     }
 
-    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
-    private List<O> processOutputs(TranslatorContext ctx, NDList list) throws Exception {
-        NDList[] unbatched = translator.getBatchifier().unbatchify(list);
-        List<O> outputs = new ArrayList<>(unbatched.length);
-        for (NDList output : unbatched) {
-            outputs.add(translator.processOutput(ctx, output));
-        }
-        return outputs;
-    }
-
-    private void preprocessEnd(NDList list) {
+    private void preprocessEnd(NDList list, int batchSize) {
         if (metrics != null) {
             waitToRead(list);
             long tmp = System.nanoTime();
-            long duration = tmp - timestamp;
+            long duration = (tmp - timestamp) / 1000 / batchSize;
             timestamp = tmp;
-            metrics.addMetric("Preprocess", duration, "nano");
+            metrics.addMetric("Preprocess", duration, Unit.MICROSECONDS, dimension);
         }
     }
 
-    private void predictEnd(NDList list) {
+    private void predictEnd(NDList list, int batchSize) {
         if (metrics != null) {
             waitToRead(list);
             long tmp = System.nanoTime();
-            long duration = tmp - timestamp;
+            long duration = (tmp - timestamp) / 1000 / batchSize;
             timestamp = tmp;
-            metrics.addMetric("Inference", duration, "nano");
+            metrics.addMetric("Inference", duration, Unit.MICROSECONDS, dimension);
         }
     }
 
-    private void postProcessEnd(long begin) {
+    private void postProcessEnd(long begin, int batchSize) {
         if (metrics != null) {
             long tmp = System.nanoTime();
-            long duration = tmp - timestamp;
+            long duration = (tmp - timestamp) / 1000 / batchSize;
             timestamp = tmp;
-            metrics.addMetric("Postprocess", duration, "nano");
-            metrics.addMetric("Total", tmp - begin, "nano");
+            metrics.addMetric("Postprocess", duration, Unit.MICROSECONDS, dimension);
+            long prediction = (tmp - begin) / 1000;
+            metrics.addMetric("Prediction", prediction, Unit.MICROSECONDS, dimension);
         }
     }
 
@@ -261,13 +357,21 @@ public class Predictor<I, O> implements AutoCloseable {
         super.finalize();
     }
 
-    private class PredictorContext implements TranslatorContext {
+    /** An implementation of {@link TranslatorContext}. */
+    public static final class PredictorContext implements TranslatorContext {
 
+        private Model model;
+        private NDManager predictorManager;
+        private Metrics metrics;
         private NDManager ctxManager;
         private Map<String, Object> attachments;
 
-        PredictorContext() {
-            ctxManager = manager.newSubManager();
+        /** Constructs a new {@code PredictorContext} instance. */
+        public PredictorContext(Model model, NDManager predictorManager, Metrics metrics) {
+            this.model = model;
+            this.predictorManager = predictorManager;
+            this.metrics = metrics;
+            ctxManager = predictorManager.newSubManager();
             ctxManager.setName("predictor ctx");
             attachments = new ConcurrentHashMap<>();
         }
@@ -282,6 +386,18 @@ public class Predictor<I, O> implements AutoCloseable {
         @Override
         public NDManager getNDManager() {
             return ctxManager;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public NDManager getPredictorManager() {
+            return predictorManager;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public Block getBlock() {
+            return model.getBlock();
         }
 
         /** {@inheritDoc} */

@@ -12,11 +12,17 @@
  */
 package ai.djl.integration;
 
+import ai.djl.integration.util.TestUtils;
 import ai.djl.util.cuda.CudaUtils;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 public class IntegrationTests {
 
@@ -26,22 +32,28 @@ public class IntegrationTests {
     public void runIntegrationTests() {
         String[] args = {};
 
-        String[] engines;
+        List<String> engines = new ArrayList<>();
         String defaultEngine = System.getProperty("ai.djl.default_engine");
         if (defaultEngine == null) {
             // TODO: windows CPU build is having OOM issue if 3 engines are loaded and running tests
             // together
             if (System.getProperty("os.name").startsWith("Win")) {
-                engines = new String[] {"MXNet"};
+                engines.add("PyTorch");
+            } else if ("aarch64".equals(System.getProperty("os.arch"))) {
+                engines.add("PyTorch");
             } else {
-                engines = new String[] {"MXNet", "PyTorch", "TensorFlow"};
+                engines.addAll(
+                        Arrays.asList("MXNet", "TensorFlow", "OnnxRuntime", "XGBoost", "LightGBM"));
+                if (!System.getProperty("os.name").startsWith("Mac")) {
+                    engines.add("PyTorch");
+                }
             }
         } else {
-            engines = new String[] {defaultEngine};
+            engines.add(defaultEngine);
         }
 
         for (String engine : engines) {
-            System.setProperty("ai.djl.default_engine", engine);
+            TestUtils.setEngine(engine);
             logger.info("Testing engine: {} ...", engine);
             Assert.assertTrue(new IntegrationTest(IntegrationTest.class).runTests(args));
             // currently each engine will reserve a certain amount of memory and hold it until

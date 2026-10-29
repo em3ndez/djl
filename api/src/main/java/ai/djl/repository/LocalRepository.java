@@ -14,16 +14,20 @@ package ai.djl.repository;
 
 import ai.djl.Application;
 import ai.djl.util.JsonUtils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.Reader;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.stream.Stream;
 
 /**
  * A {@code LocalRepository} is a {@link Repository} located in a filesystem directory.
@@ -34,7 +38,6 @@ public class LocalRepository extends AbstractRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(LocalRepository.class);
 
-    private String name;
     private Path path;
 
     /**
@@ -43,10 +46,11 @@ public class LocalRepository extends AbstractRepository {
      * <p>Use {@link Repository#newInstance(String, String)}.
      *
      * @param name the name of the repository
+     * @param uri the base URI of the repository
      * @param path the path to the repository
      */
-    protected LocalRepository(String name, Path path) {
-        this.name = name;
+    protected LocalRepository(String name, URI uri, Path path) {
+        super(name, uri);
         this.path = path;
     }
 
@@ -58,28 +62,17 @@ public class LocalRepository extends AbstractRepository {
 
     /** {@inheritDoc} */
     @Override
-    public String getName() {
-        return name;
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public URI getBaseUri() {
-        return path.toUri();
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public Metadata locate(MRL mrl) throws IOException {
         URI uri = mrl.toURI();
-        Path base = path.resolve(uri.getPath());
+        // The MRL path carries caller-supplied group and artifact ids, as in RemoteRepository.
+        Path base = resolveInside(path, uri.getPath());
         Path file = base.resolve("metadata.json");
         if (!Files.isRegularFile(file)) {
             return null;
         }
         try (Reader reader = Files.newBufferedReader(file)) {
             Metadata metadata = JsonUtils.GSON_PRETTY.fromJson(reader, Metadata.class);
-            metadata.init();
+            metadata.init(arguments);
             metadata.setRepositoryUri(uri);
             return metadata;
         }
@@ -87,45 +80,41 @@ public class LocalRepository extends AbstractRepository {
 
     /** {@inheritDoc} */
     @Override
-    public Artifact resolve(MRL mrl, String version, Map<String, String> filter)
-            throws IOException {
+    public Artifact resolve(MRL mrl, Map<String, String> filter) throws IOException {
         Metadata metadata = locate(mrl);
-        VersionRange range = VersionRange.parse(version);
+        VersionRange range = VersionRange.parse(mrl.getVersion());
         List<Artifact> artifacts = metadata.search(range, filter);
         if (artifacts.isEmpty()) {
             return null;
         }
-        // TODO: find highest version.
-        return artifacts.get(0);
+        return artifacts.stream().max(Comparator.comparing(o -> new Version(o.getVersion()))).get();
     }
 
     /** {@inheritDoc} */
     @Override
     public List<MRL> getResources() {
         List<MRL> list = new ArrayList<>();
-        try {
-            Files.walk(path)
-                    .forEach(
-                            f -> {
-                                if (f.endsWith("metadata.json") && Files.isRegularFile(f)) {
-                                    Path relative = path.relativize(f);
-                                    String type = relative.getName(0).toString();
-                                    try (Reader reader = Files.newBufferedReader(f)) {
-                                        Metadata metadata =
-                                                JsonUtils.GSON.fromJson(reader, Metadata.class);
-                                        Application application = metadata.getApplication();
-                                        String groupId = metadata.getGroupId();
-                                        String artifactId = metadata.getArtifactId();
-                                        if ("dataset".equals(type)) {
-                                            list.add(MRL.dataset(application, groupId, artifactId));
-                                        } else if ("model".equals(type)) {
-                                            list.add(MRL.model(application, groupId, artifactId));
-                                        }
-                                    } catch (IOException e) {
-                                        logger.warn("Failed to read metadata.json", e);
-                                    }
+        try (Stream<Path> stream = Files.walk(path)) {
+            stream.forEach(
+                    f -> {
+                        if (f.endsWith("metadata.json") && Files.isRegularFile(f)) {
+                            Path relative = path.relativize(f);
+                            String type = relative.getName(0).toString();
+                            try (Reader reader = Files.newBufferedReader(f)) {
+                                Metadata metadata = JsonUtils.GSON.fromJson(reader, Metadata.class);
+                                Application application = metadata.getApplication();
+                                String groupId = metadata.getGroupId();
+                                String artifactId = metadata.getArtifactId();
+                                if ("dataset".equals(type)) {
+                                    list.add(dataset(application, groupId, artifactId));
+                                } else if ("model".equals(type)) {
+                                    list.add(model(application, groupId, artifactId));
                                 }
-                            });
+                            } catch (IOException e) {
+                                logger.warn("Failed to read metadata.json", e);
+                            }
+                        }
+                    });
         } catch (IOException e) {
             logger.warn("", e);
         }

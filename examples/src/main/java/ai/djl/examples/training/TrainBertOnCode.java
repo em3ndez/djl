@@ -12,7 +12,6 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.examples.training.util.Arguments;
 import ai.djl.examples.training.util.BertCodeDataset;
@@ -36,6 +35,7 @@ import ai.djl.training.tracker.Tracker;
 import ai.djl.training.tracker.WarmUpTracker;
 import ai.djl.training.tracker.WarmUpTracker.Mode;
 import ai.djl.translate.TranslateException;
+
 import java.io.IOException;
 
 /** Simple example that performs Bert pretraining on the java source files in this repo. */
@@ -54,11 +54,12 @@ public final class TrainBertOnCode {
         BertArguments arguments = (BertArguments) new BertArguments().parseArgs(args);
 
         BertCodeDataset dataset =
-                new BertCodeDataset(arguments.getBatchSize(), arguments.getLimit());
+                new BertCodeDataset(
+                        arguments.getBatchSize(), arguments.getLimit(), arguments.getEngine());
         dataset.prepare();
 
         // Create model & trainer
-        try (Model model = createBertPretrainingModel(dataset.getDictionarySize())) {
+        try (Model model = createBertPretrainingModel(arguments, dataset.getVocabularySize())) {
 
             TrainingConfig config = createTrainingConfig(arguments);
             try (Trainer trainer = model.newTrainer(config)) {
@@ -73,13 +74,15 @@ public final class TrainBertOnCode {
         }
     }
 
-    private static Model createBertPretrainingModel(int dictionarySize) {
+    private static Model createBertPretrainingModel(Arguments arguments, long vocabularySize) {
         Block block =
                 new BertPretrainingBlock(
-                        BertBlock.builder().micro().setTokenDictionarySize(dictionarySize));
+                        BertBlock.builder()
+                                .micro()
+                                .setTokenDictionarySize(Math.toIntExact(vocabularySize)));
         block.setInitializer(new TruncatedNormalInitializer(0.02f), Parameter.Type.WEIGHT);
 
-        Model model = Model.newInstance("Bert Pretraining");
+        Model model = Model.newInstance("Bert Pretraining", arguments.getEngine());
         model.setBlock(block);
         return model;
     }
@@ -105,7 +108,7 @@ public final class TrainBertOnCode {
                         .build();
         return new DefaultTrainingConfig(new BertPretrainingLoss())
                 .optOptimizer(optimizer)
-                .optDevices(Device.getDevices(arguments.getMaxGpus()))
+                .optDevices(arguments.getMaxGpus())
                 .addTrainingListeners(Defaults.logging());
     }
 

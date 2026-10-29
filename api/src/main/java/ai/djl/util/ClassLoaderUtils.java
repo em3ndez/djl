@@ -12,23 +12,30 @@
  */
 package ai.djl.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
-import java.util.Collection;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.stream.Stream;
+
+import javax.tools.JavaCompiler;
+import javax.tools.ToolProvider;
 
 /** A utility class that load classes from specific URLs. */
 public final class ClassLoaderUtils {
@@ -42,45 +49,68 @@ public final class ClassLoaderUtils {
      *
      * <p>For .class file, this function expects them in classes/your/package/ClassName.class
      *
+     * <p>Loading {@code .class} and {@code .jar} content bundled with a model is disabled by
+     * default. Enable it with {@code DJL_LOAD_BUNDLED_CLASSES=true} or {@code
+     * -Dai.djl.load_bundled_classes=true} when loading models from a trusted source. While it is
+     * disabled, a non-null {@code className} is still resolved against the application classpath,
+     * so an implementation installed by the application continues to load; a null {@code className}
+     * returns null, because discovering a name requires reading the bundled content. This applies
+     * to precompiled content regardless of {@link #compileJavaClass(Path)}, so a model that bundles
+     * {@code .java} sources needs both flags.
+     *
      * @param path the path to scan from
+     * @param type the type of the class
      * @param className the name of the classes, pass null if name is unknown
      * @param <T> the Template T for the output Class
      * @return the Class implementation
      */
-    public static <T> T findImplementation(Path path, String className) {
+    public static <T> T findImplementation(Path path, Class<T> type, String className) {
         try {
             Path classesDir = path.resolve("classes");
             // we only consider .class files and skip .java files
-            List<Path> jarFiles =
-                    Files.list(path)
-                            .filter(p -> p.toString().endsWith(".jar"))
-                            .collect(Collectors.toList());
-            final URL[] urls = new URL[jarFiles.size() + 1];
-            urls[0] = classesDir.toUri().toURL();
-            int index = 1;
-            for (Path p : jarFiles) {
-                urls[index++] = p.toUri().toURL();
+            List<Path> jarFiles = listJarFiles(path);
+            boolean bundledEnabled = isBundledClassLoadingEnabled();
+            final ClassLoader contextCl = getContextClassLoader();
+            ClassLoader cl = contextCl;
+            if (bundledEnabled) {
+                final URL[] urls = new URL[jarFiles.size() + 1];
+                urls[0] = classesDir.toUri().toURL();
+                int index = 1;
+                for (Path p : jarFiles) {
+                    urls[index++] = p.toUri().toURL();
+                }
+                cl =
+                        AccessController.doPrivileged(
+                                (PrivilegedAction<ClassLoader>)
+                                        () -> new URLClassLoader(urls, contextCl));
             }
-
-            ClassLoader cl =
-                    AccessController.doPrivileged(
-                            (PrivilegedAction<ClassLoader>)
-                                    () ->
-                                            new URLClassLoader(
-                                                    urls,
-                                                    Thread.currentThread()
-                                                            .getContextClassLoader()));
             if (className != null && !className.isEmpty()) {
-                return initClass(cl, className);
+                T impl = initClass(cl, type, className);
+                if (impl == null) {
+                    logger.warn("Failed to load class: {}", className);
+                    if (!bundledEnabled) {
+                        // Only once the classpath lookup above has failed: a model may name an
+                        // implementation the application already installed, in which case the
+                        // bundled copy was never needed and reporting it would be a false alarm.
+                        logBundledClassesIgnored(path, classesDir, jarFiles);
+                    }
+                }
+                return impl;
+            }
+            if (!bundledEnabled) {
+                // The scans below derive class names from the model's own .class and .jar entries,
+                // so without a bundled class loader there is nothing for them to look at.
+                logBundledClassesIgnored(path, classesDir, jarFiles);
+                return null;
             }
 
-            T implemented = scanDirectory(cl, classesDir);
+            T implemented = scanDirectory(cl, type, classesDir);
             if (implemented != null) {
                 return implemented;
             }
 
             for (Path p : jarFiles) {
-                implemented = scanJarFile(cl, p);
+                implemented = scanJarFile(cl, type, p);
                 if (implemented != null) {
                     return implemented;
                 }
@@ -91,29 +121,108 @@ public final class ClassLoaderUtils {
         return null;
     }
 
-    private static <T> T scanDirectory(ClassLoader cl, Path dir) throws IOException {
+    /**
+     * Returns whether the path holds bundled class content that {@link #findImplementation(Path,
+     * Class, String)} will not consult, because loading classes bundled with a model is not
+     * enabled.
+     *
+     * <p>A caller that must resolve an implementation can use this to tell "the model bundles no
+     * implementation" apart from "the model bundles one that was not loaded", which otherwise look
+     * the same: both return null.
+     *
+     * @param path the path that would be searched
+     * @return true if bundled {@code .class} or {@code .jar} content is present and will not be
+     *     loaded
+     */
+    public static boolean hasSkippedBundledClasses(Path path) {
+        if (isBundledClassLoadingEnabled()) {
+            return false;
+        }
+        try {
+            return hasBundledClasses(path.resolve("classes"), listJarFiles(path));
+        } catch (IOException e) {
+            logger.debug("Failed to list bundled jar files in {}", path, e);
+            return false;
+        }
+    }
+
+    private static List<Path> listJarFiles(Path path) throws IOException {
+        if (!Files.isDirectory(path)) {
+            return Collections.emptyList();
+        }
+        try (Stream<Path> stream = Files.list(path)) {
+            return stream.filter(p -> p.toString().endsWith(".jar")).collect(Collectors.toList());
+        }
+    }
+
+    /**
+     * Reports bundled {@code .class} or {@code .jar} content that was not consulted, if any is
+     * actually present.
+     *
+     * @param path the directory that was searched
+     * @param classesDir the bundled classes directory within it
+     * @param jarFiles the bundled jar files within it
+     */
+    private static void logBundledClassesIgnored(Path path, Path classesDir, List<Path> jarFiles) {
+        if (!hasBundledClasses(classesDir, jarFiles)) {
+            // Nothing was skipped, so stay quiet: the common case of a model that bundles no
+            // classes must not report anything, matching compileJavaClass.
+            return;
+        }
+        // Logged at error and not thrown: this method is also reached by speculative lookups that
+        // tolerate finding nothing, so failing here would break loads that never needed the bundled
+        // copy. The message names the flag so a load that did need it stays diagnosable.
+        logger.error(
+                "Ignoring classes bundled in {}: loading classes shipped with a model is disabled"
+                        + " by default. Set DJL_LOAD_BUNDLED_CLASSES=true or"
+                        + " -Dai.djl.load_bundled_classes=true to load them for models from a"
+                        + " trusted source. Alternatively install the implementation on the"
+                        + " application classpath and name it explicitly, which needs no flag.",
+                path);
+    }
+
+    private static boolean hasBundledClasses(Path classesDir, List<Path> jarFiles) {
+        if (!jarFiles.isEmpty()) {
+            return true;
+        }
+        if (!Files.isDirectory(classesDir)) {
+            return false;
+        }
+        try (Stream<Path> stream = Files.walk(classesDir)) {
+            return stream.anyMatch(p -> Files.isRegularFile(p) && p.toString().endsWith(".class"));
+        } catch (IOException | RuntimeException e) {
+            // Files.walk surfaces traversal errors from the terminal operation as an unchecked
+            // UncheckedIOException. This only decides whether to report, so treat a tree that
+            // cannot be read as nothing to report rather than failing the lookup.
+            logger.debug("Failed to scan for bundled classes in {}", classesDir, e);
+            return false;
+        }
+    }
+
+    private static <T> T scanDirectory(ClassLoader cl, Class<T> type, Path dir) throws IOException {
         if (!Files.isDirectory(dir)) {
-            logger.debug("Directory not exists: {}", dir);
+            logger.trace("Directory not exists: {}", dir);
             return null;
         }
-        Collection<Path> files =
-                Files.walk(dir)
-                        .filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class"))
-                        .collect(Collectors.toList());
-        for (Path file : files) {
-            Path p = dir.relativize(file);
-            String className = p.toString();
-            className = className.substring(0, className.lastIndexOf('.'));
-            className = className.replace(File.separatorChar, '.');
-            T implemented = initClass(cl, className);
-            if (implemented != null) {
-                return implemented;
+        try (Stream<Path> stream = Files.walk(dir)) {
+            List<Path> files =
+                    stream.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class"))
+                            .collect(Collectors.toList());
+            for (Path file : files) {
+                Path p = dir.relativize(file);
+                String className = p.toString();
+                className = className.substring(0, className.lastIndexOf('.'));
+                className = className.replace(File.separatorChar, '.');
+                T implemented = initClass(cl, type, className);
+                if (implemented != null) {
+                    return implemented;
+                }
             }
         }
         return null;
     }
 
-    private static <T> T scanJarFile(ClassLoader cl, Path path) throws IOException {
+    private static <T> T scanJarFile(ClassLoader cl, Class<T> type, Path path) throws IOException {
         try (JarFile jarFile = new JarFile(path.toFile())) {
             Enumeration<JarEntry> en = jarFile.entries();
             while (en.hasMoreElements()) {
@@ -122,7 +231,7 @@ public final class ClassLoaderUtils {
                 if (fileName.endsWith(".class")) {
                     fileName = fileName.substring(0, fileName.lastIndexOf('.'));
                     fileName = fileName.replace('/', '.');
-                    T implemented = initClass(cl, fileName);
+                    T implemented = initClass(cl, type, fileName);
                     if (implemented != null) {
                         return implemented;
                     }
@@ -132,15 +241,211 @@ public final class ClassLoaderUtils {
         return null;
     }
 
-    @SuppressWarnings("unchecked")
-    private static <T> T initClass(ClassLoader cl, String className) {
+    /**
+     * Loads the specified class and constructs an instance.
+     *
+     * <p>The class is resolved without being initialized and is type-checked against {@code type}
+     * before it is instantiated, so a class that does not implement {@code type} never runs its
+     * static initializer.
+     *
+     * @param cl the {@code ClassLoader} to use
+     * @param type the type of the class
+     * @param className the class to be loaded
+     * @param <T> the type of the class
+     * @return an instance of the class, null if the class not found
+     */
+    public static <T> T initClass(ClassLoader cl, Class<T> type, String className) {
         try {
-            Class<?> clazz = Class.forName(className, true, cl);
-            Constructor<T> constructor = (Constructor<T>) clazz.getConstructor();
+            // initialize = false: the asSubclass check below then runs before any code in the
+            // class does, so naming a class is not enough to execute it.
+            Class<?> clazz = Class.forName(className, false, cl);
+            Class<? extends T> sub = clazz.asSubclass(type);
+            Constructor<? extends T> constructor = sub.getConstructor();
             return constructor.newInstance();
         } catch (Throwable e) {
             logger.trace("Not able to load Object", e);
         }
         return null;
+    }
+
+    /**
+     * Returns the context class loader if available.
+     *
+     * @return the context class loader if available
+     */
+    public static ClassLoader getContextClassLoader() {
+        ClassLoader cl = Thread.currentThread().getContextClassLoader();
+        if (cl == null) {
+            return ClassLoaderUtils.class.getClassLoader(); // NOPMD
+        }
+        return cl;
+    }
+
+    /**
+     * Finds all the resources with the given name.
+     *
+     * @param name the resource name
+     * @return An enumeration of {@link java.net.URL URL} objects for the resource
+     * @throws IOException if I/O errors occur
+     */
+    public static Enumeration<URL> getResources(String name) throws IOException {
+        return getContextClassLoader().getResources(name);
+    }
+
+    /**
+     * Finds the first resource in class path with the given name.
+     *
+     * @param name the resource name
+     * @return an enumeration of {@link java.net.URL URL} objects for the resource
+     * @throws IOException if I/O errors occur
+     */
+    public static URL getResource(String name) throws IOException {
+        Enumeration<URL> en = getResources(name);
+        if (en.hasMoreElements()) {
+            return en.nextElement();
+        }
+        return null;
+    }
+
+    /**
+     * Returns an {@code InputStream} for reading from the resource.
+     *
+     * @param name the resource name
+     * @return an {@code InputStream} for reading
+     * @throws IOException if I/O errors occur
+     */
+    public static InputStream getResourceAsStream(String name) throws IOException {
+        URL url = getResource(name);
+        if (url == null) {
+            throw new IOException("Resource not found in classpath: " + name);
+        }
+        return url.openStream();
+    }
+
+    /**
+     * Uses provided nativeHelper to load native library.
+     *
+     * @param nativeHelper a native helper class that loads native library
+     * @param path the native library file path
+     */
+    public static void nativeLoad(String nativeHelper, String path) {
+        try {
+            Class<?> clazz = Class.forName(nativeHelper, true, getContextClassLoader());
+            Method method = clazz.getDeclaredMethod("load", String.class);
+            method.invoke(null, path);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalArgumentException("Invalid native_helper: " + nativeHelper, e);
+        }
+    }
+
+    /**
+     * Tries to compile java classes in the directory.
+     *
+     * <p>Compiling bundled {@code .java} sources at model-load time is disabled by default. Enable
+     * it with {@code DJL_COMPILE_JAVA=true} or {@code -Dai.djl.compile_java=true} when loading
+     * models from a trusted source. Models that supply a translator programmatically are
+     * unaffected.
+     *
+     * <p>Compiled output is still bundled content, so this flag alone does not make it loadable:
+     * {@link #findImplementation(Path, Class, String)} must also be enabled for a model that
+     * bundles sources to load. Models that ship precompiled {@code .class} or {@code .jar} files
+     * need only that flag, not this one.
+     *
+     * @param dir the directory to scan java file.
+     */
+    public static void compileJavaClass(Path dir) {
+        String[] files = findJavaSources(dir);
+        if (files.length == 0) {
+            // Nothing to compile: the common case of a model without bundled sources stays quiet.
+            return;
+        }
+        if (!isDynamicCompilationEnabled()) {
+            // Logged at error and not thrown: a model may also ship a precompiled .class or .jar
+            // that satisfies the lookup, or the sources may be incidental to it, so failing here
+            // would break loads that do not depend on compiling them. The message names the flag so
+            // a model that did depend on it is diagnosable.
+            logger.error(
+                    "Skipping {} bundled java file(s) in {}: compiling bundled sources is disabled"
+                            + " by default. Set DJL_COMPILE_JAVA=true or"
+                            + " -Dai.djl.compile_java=true to enable it for models from a trusted"
+                            + " source, or ship precompiled .class/.jar files instead.",
+                    files.length,
+                    dir);
+            return;
+        }
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) {
+            logger.warn(
+                    "Cannot compile {} bundled java file(s) in {}: no system java compiler is"
+                            + " available, a JDK is required.",
+                    files.length,
+                    dir);
+            return;
+        }
+        try {
+            int rc = compiler.run(null, null, null, files);
+            if (rc != 0) {
+                // Report the failure: the caller resolves a translator from the compiled output, so
+                // a failed compile otherwise surfaces later as a missing class or as a silent
+                // fallback to a default implementation. Compiler diagnostics go to stderr.
+                logger.error(
+                        "Failed to compile {} bundled java file(s) in {}, compiler exit code {}."
+                                + " See the compiler output for details.",
+                        files.length,
+                        dir,
+                        rc);
+            }
+        } catch (Throwable e) {
+            logger.warn("Failed to compile bundled java file", e);
+        }
+    }
+
+    private static String[] findJavaSources(Path dir) {
+        try {
+            if (!Files.isDirectory(dir)) {
+                logger.debug("Directory does not exist: {}", dir);
+                return Utils.EMPTY_ARRAY;
+            }
+            try (Stream<Path> stream = Files.walk(dir)) {
+                return stream.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".java"))
+                        .map(p -> p.toAbsolutePath().toString())
+                        .toArray(String[]::new);
+            }
+        } catch (IOException | RuntimeException e) {
+            // Files.walk reports traversal errors from the terminal operation as an unchecked
+            // UncheckedIOException (an unreadable subdirectory, a symlink loop, a directory removed
+            // concurrently), so catching IOException alone would turn a scan problem into a failed
+            // model load.
+            logger.warn("Failed to scan for bundled java files in {}", dir, e);
+            return Utils.EMPTY_ARRAY;
+        }
+    }
+
+    /**
+     * Returns whether dynamic compilation of bundled java sources is explicitly enabled.
+     *
+     * @return true if {@code DJL_COMPILE_JAVA} / {@code ai.djl.compile_java} is set true
+     */
+    static boolean isDynamicCompilationEnabled() {
+        String mode = Utils.getenv("DJL_COMPILE_JAVA", System.getProperty("ai.djl.compile_java"));
+        return Boolean.parseBoolean(mode);
+    }
+
+    /**
+     * Returns whether loading classes bundled with a model is explicitly enabled.
+     *
+     * <p>This covers precompiled {@code .class} and {@code .jar} content and is independent of
+     * {@link #isDynamicCompilationEnabled()}, which only covers compiling bundled {@code .java}
+     * sources.
+     *
+     * @return true if {@code DJL_LOAD_BUNDLED_CLASSES} / {@code ai.djl.load_bundled_classes} is set
+     *     true
+     */
+    static boolean isBundledClassLoadingEnabled() {
+        String mode =
+                Utils.getenv(
+                        "DJL_LOAD_BUNDLED_CLASSES",
+                        System.getProperty("ai.djl.load_bundled_classes"));
+        return Boolean.parseBoolean(mode);
     }
 }

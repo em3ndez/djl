@@ -18,6 +18,8 @@ import ai.djl.ndarray.index.dim.NDIndexBooleans;
 import ai.djl.ndarray.index.dim.NDIndexElement;
 import ai.djl.ndarray.index.full.NDIndexFullPick;
 import ai.djl.ndarray.index.full.NDIndexFullSlice;
+import ai.djl.ndarray.index.full.NDIndexFullTake;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -32,6 +34,15 @@ public abstract class NDArrayIndexer {
      * @return the subArray
      */
     public abstract NDArray get(NDArray array, NDIndexFullPick fullPick);
+
+    /**
+     * Returns a subarray by taken the elements from one axis.
+     *
+     * @param array the array to get from
+     * @param fullTake the elements to pick
+     * @return the subArray
+     */
+    public abstract NDArray get(NDArray array, NDIndexFullTake fullTake);
 
     /**
      * Returns a subarray at the slice.
@@ -59,9 +70,14 @@ public abstract class NDArrayIndexer {
         if (!indices.isEmpty() && indices.get(0) instanceof NDIndexBooleans) {
             if (indices.size() != 1) {
                 throw new IllegalArgumentException(
-                        "get() currently didn't support more that one boolean NDArray");
+                        "get() currently doesn't support more that one boolean NDArray");
             }
             return array.booleanMask(((NDIndexBooleans) indices.get(0)).getIndex());
+        }
+
+        Optional<NDIndexFullTake> fullTake = NDIndexFullTake.fromIndex(index, array.getShape());
+        if (fullTake.isPresent()) {
+            return get(array, fullTake.get());
         }
 
         Optional<NDIndexFullPick> fullPick = NDIndexFullPick.fromIndex(index, array.getShape());
@@ -75,6 +91,53 @@ public abstract class NDArrayIndexer {
         }
         throw new UnsupportedOperationException(
                 "get() currently supports all, fixed, and slices indices");
+    }
+
+    /**
+     * Sets the entries of array at the indexed locations with the parameter value. The value can be
+     * only Number or NDArray.
+     *
+     * @param array the array to set
+     * @param index the index to set at in the array
+     * @param value the value to set with
+     */
+    public void set(NDArray array, NDIndex index, Object value) {
+        NDIndexFullSlice fullSlice =
+                NDIndexFullSlice.fromIndex(index, array.getShape()).orElse(null);
+        if (fullSlice != null) {
+            if (value instanceof Number) {
+                set(array, fullSlice, (Number) value);
+            } else if (value instanceof NDArray) {
+                set(array, fullSlice, (NDArray) value);
+            } else {
+                throw new IllegalArgumentException(
+                        "The type of value to assign cannot be other than NDArray and Number.");
+            }
+            return;
+        }
+
+        List<NDIndexElement> indices = index.getIndices();
+        if (!indices.isEmpty() && indices.get(0) instanceof NDIndexBooleans) {
+            if (indices.size() != 1) {
+                throw new IllegalArgumentException(
+                        "set() currently doesn't support more than one boolean NDArray");
+            }
+            if (value instanceof Number) {
+                set(
+                        array,
+                        (NDIndexBooleans) indices.get(0),
+                        array.getManager().create((Number) value));
+            } else if (value instanceof NDArray) {
+                set(array, (NDIndexBooleans) indices.get(0), (NDArray) value);
+            } else {
+                throw new IllegalArgumentException(
+                        "The type of value to assign cannot be other than NDArray and Number.");
+            }
+            return;
+        }
+
+        throw new UnsupportedOperationException(
+                "set() currently supports all, fixed, and slices indices");
     }
 
     /**
@@ -98,33 +161,6 @@ public abstract class NDArrayIndexer {
     }
 
     /**
-     * Sets the values of the array at the index locations with an array.
-     *
-     * @param array the array to set
-     * @param index the index to set at in the array
-     * @param value the value to set with
-     */
-    public void set(NDArray array, NDIndex index, NDArray value) {
-        List<NDIndexElement> indices = index.getIndices();
-        if (!indices.isEmpty() && indices.get(0) instanceof NDIndexBooleans) {
-            if (indices.size() != 1) {
-                throw new IllegalArgumentException(
-                        "get() currently didn't support more that one boolean NDArray");
-            }
-            set(array, (NDIndexBooleans) indices.get(0), value);
-        }
-
-        NDIndexFullSlice fullSlice =
-                NDIndexFullSlice.fromIndex(index, array.getShape()).orElse(null);
-        if (fullSlice != null) {
-            set(array, fullSlice, value);
-            return;
-        }
-        throw new UnsupportedOperationException(
-                "set() currently supports all, fixed, and slices indices");
-    }
-
-    /**
      * Sets the values of the array at the fullSlice with a number.
      *
      * @param array the array to set
@@ -132,34 +168,6 @@ public abstract class NDArrayIndexer {
      * @param value the value to set with
      */
     public abstract void set(NDArray array, NDIndexFullSlice fullSlice, Number value);
-
-    /**
-     * Sets the values of the array at the index locations with a number.
-     *
-     * @param array the array to set
-     * @param index the index to set at in the array
-     * @param value the value to set with
-     */
-    public void set(NDArray array, NDIndex index, Number value) {
-        NDIndexFullSlice fullSlice =
-                NDIndexFullSlice.fromIndex(index, array.getShape()).orElse(null);
-        if (fullSlice != null) {
-            set(array, fullSlice, value);
-            return;
-        }
-        // use booleanMask for NDIndexBooleans case
-        List<NDIndexElement> indices = index.getIndices();
-        if (!indices.isEmpty() && indices.get(0) instanceof NDIndexBooleans) {
-            if (indices.size() != 1) {
-                throw new IllegalArgumentException(
-                        "set() currently didn't support more that one boolean NDArray");
-            }
-            set(array, (NDIndexBooleans) indices.get(0), array.getManager().create(value));
-            return;
-        }
-        throw new UnsupportedOperationException(
-                "set() currently supports all, fixed, and slices indices");
-    }
 
     /**
      * Sets a scalar value in the array at the indexed location.

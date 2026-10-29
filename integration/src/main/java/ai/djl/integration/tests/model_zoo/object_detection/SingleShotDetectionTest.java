@@ -14,8 +14,7 @@
 package ai.djl.integration.tests.model_zoo.object_detection;
 
 import ai.djl.Application;
-import ai.djl.Device;
-import ai.djl.MalformedModelException;
+import ai.djl.ModelException;
 import ai.djl.basicdataset.cv.PikachuDetection;
 import ai.djl.basicmodelzoo.BasicModelZoo;
 import ai.djl.inference.Predictor;
@@ -32,7 +31,6 @@ import ai.djl.nn.Block;
 import ai.djl.nn.LambdaBlock;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.repository.zoo.Criteria;
-import ai.djl.repository.zoo.ModelNotFoundException;
 import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import ai.djl.training.DefaultTrainingConfig;
@@ -46,19 +44,18 @@ import ai.djl.training.evaluator.SingleShotDetectionAccuracy;
 import ai.djl.training.loss.SingleShotDetectionLoss;
 import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
+
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import org.testng.Assert;
-import org.testng.SkipException;
-import org.testng.annotations.Test;
 
 public class SingleShotDetectionTest {
 
     @Test
-    public void testLoadPredict()
-            throws IOException, ModelNotFoundException, TranslateException,
-                    MalformedModelException {
+    public void testLoadPredict() throws IOException, ModelException, TranslateException {
         try (ZooModel<Image, DetectedObjects> model = getModel()) {
             model.setBlock(getPredictBlock(model.getBlock()));
             try (Predictor<Image, DetectedObjects> predictor = model.newPredictor()) {
@@ -73,9 +70,7 @@ public class SingleShotDetectionTest {
     }
 
     @Test
-    public void testLoadTrain()
-            throws IOException, ModelNotFoundException, MalformedModelException,
-                    TranslateException {
+    public void testLoadTrain() throws IOException, ModelException, TranslateException {
         try (ZooModel<Image, DetectedObjects> model = getModel()) {
             TrainingConfig config = setupTrainingConfig();
             try (Trainer trainer = model.newTrainer(config)) {
@@ -125,25 +120,23 @@ public class SingleShotDetectionTest {
         return new DefaultTrainingConfig(new SingleShotDetectionLoss())
                 .addEvaluator(new SingleShotDetectionAccuracy("classAccuracy"))
                 .addEvaluator(new BoundingBoxError("boundingBoxError"))
-                .optDevices(Device.getDevices(1));
+                .optDevices(TestUtils.getDevices(1));
     }
 
-    private ZooModel<Image, DetectedObjects> getModel()
-            throws IOException, ModelNotFoundException, MalformedModelException {
-        if (!TestUtils.isMxnet()) {
-            throw new SkipException("SSD-pikachu model only available in MXNet");
-        }
-
+    private ZooModel<Image, DetectedObjects> getModel() throws IOException, ModelException {
+        TestUtils.requiresEngine(
+                ModelZoo.getModelZoo("ai.djl.zoo").getSupportedEngines().toArray(String[]::new));
         Criteria<Image, DetectedObjects> criteria =
                 Criteria.builder()
                         .optApplication(Application.CV.OBJECT_DETECTION)
                         .setTypes(Image.class, DetectedObjects.class)
                         .optGroupId(BasicModelZoo.GROUP_ID)
                         .optArtifactId("ssd")
+                        .optEngine(TestUtils.getEngine())
                         .optFilter("flavor", "tiny")
                         .optFilter("dataset", "pikachu")
                         .build();
 
-        return ModelZoo.loadModel(criteria);
+        return criteria.loadModel();
     }
 }

@@ -12,19 +12,22 @@
  */
 package ai.djl.integration.tests.modality.cv;
 
+import ai.djl.integration.util.TestUtils;
 import ai.djl.modality.cv.MultiBoxDetection;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.testing.Assertions;
+
 import org.testng.annotations.Test;
 
 public class MultiBoxDetectionTest {
+
     @Test
     public void testDetections() {
         MultiBoxDetection multiBoxDetection = MultiBoxDetection.builder().build();
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray anchors =
                     manager.create(
                                     new float[] {

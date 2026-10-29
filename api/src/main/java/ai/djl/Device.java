@@ -13,11 +13,18 @@
 package ai.djl;
 
 import ai.djl.engine.Engine;
-import ai.djl.engine.StandardCapabilities;
-import ai.djl.util.cuda.CudaUtils;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * The {@code Device} class provides the specified assignment for CPU/GPU processing on the {@code
@@ -29,15 +36,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * @see <a href="https://d2l.djl.ai/chapter_deep-learning-computation/use-gpu.html">The D2L chapter
  *     on GPU devices</a>
  */
-public final class Device {
+public class Device {
 
     private static final Map<String, Device> CACHE = new ConcurrentHashMap<>();
 
     private static final Device CPU = new Device(Type.CPU, -1);
     private static final Device GPU = Device.of(Type.GPU, 0);
 
-    private String deviceType;
-    private int deviceId;
+    private static final Pattern DEVICE_NAME = Pattern.compile("([a-z]+)([0-9]*)");
+
+    protected String deviceType;
+    protected int deviceId;
 
     /**
      * Creates a {@code Device} with basic information.
@@ -67,6 +76,67 @@ public final class Device {
     }
 
     /**
+     * Parses a deviceName string into a device for the default engine.
+     *
+     * @param deviceName deviceName String to parse
+     * @return the parsed device
+     * @see #fromName(String, Engine)
+     */
+    public static Device fromName(String deviceName) {
+        return fromName(deviceName, Engine.getInstance());
+    }
+
+    /**
+     * Parses a deviceName string into a device.
+     *
+     * <p>The main format of a device name string is "cpu", "gpu0", or "nc1". This is simply
+     * deviceType concatenated with the deviceId. If no deviceId is used, -1 will be assumed.
+     *
+     * <p>There are also several simplified formats. The "-1", deviceNames corresponds to cpu.
+     * Non-negative integer deviceNames such as "0", "1", or "2" correspond to gpus with those
+     * deviceIds.
+     *
+     * <p>Finally, unspecified deviceNames (null or "") are parsed into the engine's default device.
+     *
+     * @param deviceName deviceName string
+     * @param engine the engine the devie is for
+     * @return the device
+     */
+    public static Device fromName(String deviceName, Engine engine) {
+        if (deviceName == null || deviceName.isEmpty()) {
+            return engine.defaultDevice();
+        }
+
+        if (deviceName.contains("+")) {
+            String[] split = deviceName.split("\\+");
+            List<Device> subDevices =
+                    Arrays.stream(split).map(n -> fromName(n, engine)).collect(Collectors.toList());
+            return new MultiDevice(subDevices);
+        }
+
+        Matcher matcher = DEVICE_NAME.matcher(deviceName);
+        if (matcher.matches()) {
+            String deviceType = matcher.group(1);
+            int deviceId = -1;
+            if (!matcher.group(2).isEmpty()) {
+                deviceId = Integer.parseInt(matcher.group(2));
+            }
+            return Device.of(deviceType, deviceId);
+        }
+
+        try {
+            int deviceId = Integer.parseInt(deviceName);
+
+            if (deviceId < 0) {
+                return Device.cpu();
+            }
+            return Device.gpu(deviceId);
+        } catch (NumberFormatException ignored) {
+        }
+        throw new IllegalArgumentException("Failed to parse device name: " + deviceName);
+    }
+
+    /**
      * Returns the device type of the Device.
      *
      * @return the device type of the Device
@@ -81,10 +151,25 @@ public final class Device {
      * @return the {@code deviceId} of the Device
      */
     public int getDeviceId() {
-        if (Type.CPU.equals(deviceType)) {
-            throw new IllegalStateException("CPU doesn't have device id");
-        }
         return deviceId;
+    }
+
+    /**
+     * Returns if the {@code Device} is GPU.
+     *
+     * @return if the {@code Device} is GPU.
+     */
+    public boolean isGpu() {
+        return Type.GPU.equals(deviceType);
+    }
+
+    /**
+     * Returns the sub devices if present (such as a {@link MultiDevice}), otherwise this.
+     *
+     * @return the sub devices if present (such as a {@link MultiDevice}), otherwise this.
+     */
+    public List<Device> getDevices() {
+        return Collections.singletonList(this);
     }
 
     /** {@inheritDoc} */
@@ -146,96 +231,93 @@ public final class Device {
         return of(Type.GPU, deviceId);
     }
 
-    /**
-     * Returns an array of devices.
-     *
-     * <p>If GPUs are available, it will return an array of {@code Device} of size
-     * \(min(numAvailable, maxGpus)\). Else, it will return an array with a single CPU device.
-     *
-     * @return an array of devices
-     */
-    public static Device[] getDevices() {
-        return getDevices(Integer.MAX_VALUE);
-    }
-
-    /**
-     * Returns an array of devices given the maximum number of GPUs to use.
-     *
-     * <p>If GPUs are available, it will return an array of {@code Device} of size
-     * \(min(numAvailable, maxGpus)\). Else, it will return an array with a single CPU device.
-     *
-     * @param maxGpus the max number of GPUs to use. Use 0 for no GPUs.
-     * @return an array of devices
-     */
-    public static Device[] getDevices(int maxGpus) {
-        int count = getGpuCount();
-        if (maxGpus <= 0 || count <= 0) {
-            return new Device[] {CPU};
-        }
-
-        count = Math.min(maxGpus, count);
-
-        Device[] devices = new Device[count];
-        for (int i = 0; i < count; ++i) {
-            devices[i] = gpu(i);
-        }
-        return devices;
-    }
-
-    /**
-     * Returns the number of GPUs available in the system.
-     *
-     * @return the number of GPUs available in the system
-     */
-    public static int getGpuCount() {
-        if (Engine.getInstance().hasCapability(StandardCapabilities.CUDA)) {
-            return CudaUtils.getGpuCount();
-        }
-        return 0;
-    }
-
-    /**
-     * Returns the default context used in Engine.
-     *
-     * <p>The default type is defined by whether the deep learning engine is recognizing GPUs
-     * available on your machine. If there is no GPU available, CPU will be used.
-     *
-     * @return a {@link Device}
-     */
-    public static Device defaultDevice() {
-        return defaultDevice(Engine.getInstance());
-    }
-
-    /**
-     * Returns the default context used in Engine.
-     *
-     * <p>The default type is defined by whether the deep learning engine is recognizing GPUs
-     * available on your machine. If there is no GPU available, CPU will be used.
-     *
-     * @param engine the engine to retrieve
-     * @return a {@link Device}
-     */
-    public static Device defaultDevice(Engine engine) {
-        return engine.defaultDevice();
-    }
-
-    /**
-     * Returns the given device or the default if it is null.
-     *
-     * @param device the device to try to return
-     * @param engine the engine to retrieve
-     * @return the given device or the default if it is null
-     */
-    public static Device defaultIfNull(Device device, Engine engine) {
-        if (device != null) {
-            return device;
-        }
-        return defaultDevice(engine);
-    }
-
     /** Contains device type string constants. */
     public interface Type {
         String CPU = "cpu";
         String GPU = "gpu";
+    }
+
+    /** A combined {@link Device} representing the composition of multiple other devices. */
+    public static class MultiDevice extends Device {
+
+        List<Device> devices;
+
+        /**
+         * Constructs a {@link MultiDevice} with a range of new devices.
+         *
+         * @param deviceType the type of the sub-devices
+         * @param startInclusive the start (inclusive) of the devices range
+         * @param endExclusive the end (exclusive) of the devices range
+         */
+        public MultiDevice(String deviceType, int startInclusive, int endExclusive) {
+            this(
+                    IntStream.range(startInclusive, endExclusive)
+                            .mapToObj(i -> Device.of(deviceType, i))
+                            .collect(Collectors.toList()));
+        }
+
+        /**
+         * Constructs a {@link MultiDevice} from sub devices.
+         *
+         * @param devices the sub devices
+         */
+        public MultiDevice(Device... devices) {
+            this(Arrays.asList(devices));
+        }
+
+        /**
+         * Constructs a {@link MultiDevice} from sub devices.
+         *
+         * @param devices the sub devices
+         */
+        public MultiDevice(List<Device> devices) {
+            super(null, -1);
+            devices.sort(
+                    Comparator.comparing(Device::getDeviceType, String.CASE_INSENSITIVE_ORDER)
+                            .thenComparingInt(Device::getDeviceId));
+            this.deviceType =
+                    String.join(
+                            "+",
+                            (Iterable<String>)
+                                    () ->
+                                            devices.stream()
+                                                    .map(d -> d.getDeviceType() + d.getDeviceId())
+                                                    .iterator());
+            this.devices = devices;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public List<Device> getDevices() {
+            return devices;
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            if (!super.equals(o)) {
+                return false;
+            }
+            MultiDevice that = (MultiDevice) o;
+            return Objects.equals(devices, that.devices);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public int hashCode() {
+            return Objects.hash(super.hashCode(), devices);
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public String toString() {
+            return deviceType + "()";
+        }
     }
 }

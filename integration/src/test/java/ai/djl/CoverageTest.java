@@ -16,14 +16,17 @@ import ai.djl.basicdataset.cv.classification.Cifar10;
 import ai.djl.basicmodelzoo.cv.classification.ResNetV1;
 import ai.djl.repository.Repository;
 import ai.djl.testing.CoverageUtils;
+
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.net.URISyntaxException;
-import org.testng.annotations.Test;
 
 public class CoverageTest {
 
     @Test
     public void test() throws IOException, ReflectiveOperationException, URISyntaxException {
+
         // API
         CoverageUtils.testGetterSetters(Device.class);
 

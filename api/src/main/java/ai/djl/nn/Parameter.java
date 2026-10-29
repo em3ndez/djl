@@ -19,11 +19,11 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.initializer.Initializer;
 import ai.djl.training.initializer.XavierInitializer;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.Objects;
-import java.util.UUID;
 
 /**
  * {@code Parameter} is a container class that holds a learnable parameter of a model.
@@ -49,7 +49,7 @@ public class Parameter implements AutoCloseable {
     private boolean requiresGrad;
 
     Parameter(Builder builder) {
-        this.id = UUID.randomUUID().toString();
+        this.id = NDManager.nextUid();
         this.name = builder.name;
         this.shape = builder.shape;
         this.type = builder.type;
@@ -113,13 +113,23 @@ public class Parameter implements AutoCloseable {
     }
 
     /**
+     * Gets the shape of this {@code Parameter}.
+     *
+     * @return the shape of this {@code Parameter}
+     */
+    public Shape getShape() {
+        return shape;
+    }
+
+    /**
      * Gets the values of this {@code Parameter} as an {@link NDArray}.
      *
      * @return an {@link NDArray} that contains values of this {@code Parameter}
      */
     public NDArray getArray() {
         if (!isInitialized()) {
-            throw new IllegalStateException("The array has not been initialized");
+            throw new UninitializedParameterException(
+                    "The array for parameter \"" + getName() + "\" has not been initialized");
         }
         return array;
     }
@@ -131,6 +141,25 @@ public class Parameter implements AutoCloseable {
      */
     public boolean requiresGradient() {
         return requiresGrad;
+    }
+
+    /**
+     * Freezes or unfreezes the parameter for training.
+     *
+     * <p>Sometimes during training, especially during transfer learning, it is typical to train
+     * only part of the model. For this, the freeze can be used to prevent certain parts from being
+     * trained.
+     *
+     * <p>This modifies the {@link #requiresGradient()} of the parameter.
+     *
+     * @param freeze true if the parameter should be frozen ({@code freeze == !requiresGradient()})
+     */
+    public void freeze(boolean freeze) {
+        requiresGrad = !freeze;
+        if (array != null) {
+            // array can be null if block is loaded and then cleared
+            array.setRequiresGradient(requiresGrad);
+        }
     }
 
     /**
@@ -153,6 +182,16 @@ public class Parameter implements AutoCloseable {
     }
 
     /**
+     * Returns the {@link Initializer} for this {@code Parameter}, if not already set. If overwrite
+     * flag is true, sets the initializer regardless.
+     *
+     * @return the initializer of this {@code Parameter}
+     */
+    public Initializer getInitializer() {
+        return initializer;
+    }
+
+    /**
      * Initializes the parameter with the given {@link NDManager}, with given {@link DataType} for
      * the given expected input shapes.
      *
@@ -160,9 +199,14 @@ public class Parameter implements AutoCloseable {
      * @param dataType the datatype of the {@code Parameter}
      */
     public void initialize(NDManager manager, DataType dataType) {
-        Objects.requireNonNull(initializer, "No initializer has been set");
-        Objects.requireNonNull(shape, "No parameter shape has been set");
+        // Param is attached to an array not null
         if (!isInitialized()) {
+            // Params in a PtSymbolBlock is set during model loading and its isInitialized()=true.
+            // Shouldn't further initialize it.
+            Objects.requireNonNull(initializer, "No initializer has been set");
+            // Params in a PtSymbolBlock can have null shape, but are still initialized (i.e. param
+            // is attached to an array not null)
+            Objects.requireNonNull(shape, "No parameter shape has been set");
             array = initializer.initialize(manager, shape, dataType);
             array.setName(name);
         }

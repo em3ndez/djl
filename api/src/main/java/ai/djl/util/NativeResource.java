@@ -13,6 +13,10 @@
 package ai.djl.util;
 
 import com.sun.jna.Pointer;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -23,12 +27,17 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public abstract class NativeResource<T> implements AutoCloseable {
 
+    private static final Logger logger = LoggerFactory.getLogger(NativeResource.class);
+
+    private static final boolean TRACK_RESOURCE = Boolean.getBoolean("ai.djl.track_resource");
+
     protected final AtomicReference<T> handle;
     private String uid;
+    private Exception exception;
 
     protected NativeResource(T handle) {
         this.handle = new AtomicReference<>(handle);
-        uid = handle.toString();
+        uid = handle.toString() + System.nanoTime();
     }
 
     /**
@@ -48,7 +57,11 @@ public abstract class NativeResource<T> implements AutoCloseable {
     public T getHandle() {
         T reference = handle.get();
         if (reference == null) {
-            throw new IllegalStateException("Native resource has been release already.");
+            if (TRACK_RESOURCE) {
+                logger.error("Native resource {} is released. Closed at:", uid, exception);
+            }
+            String message = "Native resource has been released already.";
+            throw new IllegalStateException(message);
         }
         return reference;
     }
@@ -60,6 +73,13 @@ public abstract class NativeResource<T> implements AutoCloseable {
      */
     public final String getUid() {
         return uid;
+    }
+
+    /** Remembers the stack trace on closing. */
+    public void onClose() {
+        if (TRACK_RESOURCE) {
+            exception = new Exception();
+        }
     }
 
     /** {@inheritDoc} */

@@ -12,9 +12,13 @@
  */
 package ai.djl.integration.tests.ndarray;
 
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -22,7 +26,7 @@ public class NDArrayReductionOpTest {
 
     @Test
     public void testMax() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray array = manager.create(new float[] {1f, 2f, 5f, 1f});
             Assert.assertEquals(array.max().getFloat(), 5f);
 
@@ -51,7 +55,7 @@ public class NDArrayReductionOpTest {
 
     @Test
     public void testMin() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray array = manager.create(new float[] {2f, 1f, 5f, 0f});
             Assert.assertEquals(array.min().getFloat(), 0f);
 
@@ -80,9 +84,11 @@ public class NDArrayReductionOpTest {
 
     @Test
     public void testSum() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray array = manager.create(new float[] {1f, 2f, 3f, 5f});
-            Assert.assertEquals(array.sum().getFloat(), 11f);
+            NDArray result = array.sum();
+            Assert.assertEquals(result.getDataType(), DataType.FLOAT32);
+            Assert.assertEquals(result.getFloat(), 11f);
 
             array = manager.create(new float[] {2f, 4f, 6f, 8f}, new Shape(2, 2));
             float sumAll = array.sum().getFloat();
@@ -95,6 +101,26 @@ public class NDArrayReductionOpTest {
             expected = manager.create(new float[] {8f, 12f}, new Shape(1, 2));
             Assert.assertEquals(sumKeep, expected, "Incorrect sum keep");
 
+            array = manager.ones(new Shape(2, 2), DataType.BOOLEAN);
+            Assert.assertEquals(array.sum().getDataType(), DataType.INT64);
+
+            array = manager.ones(new Shape(2, 2), DataType.UINT8);
+            Assert.assertEquals(array.sum().getDataType(), DataType.INT64);
+
+            array = manager.ones(new Shape(2, 2), DataType.INT32);
+            Assert.assertEquals(array.sum().getDataType(), DataType.INT64);
+
+            array = manager.ones(new Shape(2, 2), DataType.FLOAT64);
+            Assert.assertEquals(array.sum().getDataType(), DataType.FLOAT64);
+
+            try {
+                // MXNet doesn't support FP16
+                array = manager.ones(new Shape(2, 2), DataType.FLOAT16);
+                Assert.assertEquals(array.sum().getDataType(), DataType.FLOAT16);
+            } catch (UnsupportedOperationException ignore) {
+                // ignore
+            }
+
             // scalar
             array = manager.create(2f);
             Assert.assertEquals(array.sum().getFloat(), 2f);
@@ -106,8 +132,26 @@ public class NDArrayReductionOpTest {
     }
 
     @Test
+    public void testCumProd() {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
+            NDArray array = manager.create(new int[] {1, 2, 3, 4});
+            NDArray expected = manager.create(new long[] {1, 2, 6, 24});
+            NDArray result = array.cumProd(0);
+            Assert.assertEquals(result, expected);
+
+            result = array.cumProd(0, array.getDataType());
+            NDArray expectedInt = manager.create(new int[] {1, 2, 6, 24});
+            Assert.assertEquals(result, expectedInt);
+
+            result = array.cumProd(0, DataType.FLOAT32);
+            NDArray expectedFloat = manager.create(new float[] {1f, 2f, 6f, 24f});
+            Assert.assertEquals(result, expectedFloat);
+        }
+    }
+
+    @Test
     public void testProd() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray array = manager.create(new float[] {1f, 2f, 3f, 4f});
             Assert.assertEquals(array.prod().getFloat(), 24f);
 
@@ -136,7 +180,7 @@ public class NDArrayReductionOpTest {
 
     @Test
     public void testMean() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray array = manager.create(new float[] {1f, 2f, 3f, 4f});
             Assert.assertEquals(array.mean().getFloat(), 2.5f);
 
@@ -163,12 +207,28 @@ public class NDArrayReductionOpTest {
 
     @Test
     public void testTrace() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             NDArray original = manager.arange(8.0f).reshape(new Shape(2, 2, 2)).trace();
             NDArray expect = manager.create(new float[] {6f, 8f});
             Assert.assertEquals(original, expect);
             original = manager.arange(24.0f).reshape(new Shape(2, 2, 2, 3)).trace();
             Assert.assertEquals(original.getShape(), new Shape(2, 3));
+        }
+    }
+
+    @Test
+    public void testTopK() {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
+            NDArray array =
+                    manager.create(
+                            new float[] {1f, 2f, 5f, 1f, 2f, 3f, 8f, 9f, 0f}, new Shape(3, 3));
+            NDList outputs = array.topK(2, -1, true, true);
+            NDArray expectedValues =
+                    manager.create(new float[] {5, 2, 3, 2, 9, 8}, new Shape(3, 2));
+            NDArray expectedIndices =
+                    manager.create(new long[] {2, 1, 2, 1, 1, 0}, new Shape(3, 2));
+            Assert.assertEquals(outputs.get(0), expectedValues);
+            Assert.assertEquals(outputs.get(1), expectedIndices);
         }
     }
 }

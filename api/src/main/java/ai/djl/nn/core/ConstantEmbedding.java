@@ -19,6 +19,7 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.util.Optional;
@@ -27,18 +28,20 @@ import java.util.Optional;
 @SuppressWarnings("rawtypes")
 public class ConstantEmbedding extends AbstractBlock implements AbstractIndexedEmbedding {
 
-    private static final byte VERSION = 1;
-
     protected NDArray embedding;
 
     /**
      * Constructs a constant embedding with the given constant.
      *
+     * <p>The constant is assumed to be a fixed value, and starts out as frozen. To unfreeze, use
+     * {@link ai.djl.nn.Block#freezeParameters(boolean)}.
+     *
      * @param embedding the value to return for all embeddings
      */
+    @SuppressWarnings("this-escape")
     public ConstantEmbedding(NDArray embedding) {
-        super(VERSION);
         this.embedding = embedding;
+        freezeParameters(true);
     }
 
     /** {@inheritDoc} */
@@ -52,7 +55,8 @@ public class ConstantEmbedding extends AbstractBlock implements AbstractIndexedE
         NDArray base = manager.create(embedding.getShape());
         embedding.copyTo(base);
         Shape shape = inputs.get(0).getShape().addAll(embedding.getShape());
-        return new NDList(base.repeat(shape));
+        return new NDList(
+                base.reshape(1, embedding.size()).repeat(0, inputs.get(0).size()).reshape(shape));
     }
 
     /** {@inheritDoc} */
@@ -102,8 +106,8 @@ public class ConstantEmbedding extends AbstractBlock implements AbstractIndexedE
     public NDArray embed(NDManager manager, Object[] items) {
         NDArray base = manager.create(embedding.getShape());
         embedding.copyTo(base);
-        Shape shape = new Shape(items.length).addAll(embedding.getShape());
-        return base.repeat(shape);
+        return base.repeat(0, items.length)
+                .reshape(new Shape(items.length).addAll(embedding.getShape()));
     }
 
     /** {@inheritDoc} */

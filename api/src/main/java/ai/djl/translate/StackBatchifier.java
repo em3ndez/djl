@@ -18,6 +18,7 @@ import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
+
 import java.util.Arrays;
 import java.util.stream.LongStream;
 
@@ -26,6 +27,8 @@ import java.util.stream.LongStream;
  * The is default {@link Batchifier} for data loading.
  */
 public class StackBatchifier implements Batchifier {
+
+    private static final long serialVersionUID = 1L;
 
     /** {@inheritDoc} */
     @Override
@@ -76,7 +79,11 @@ public class StackBatchifier implements Batchifier {
                     NDArray currInput = input.get(i);
                     if (!currInput.getShape().equals(kindDataShape)) {
                         throw new IllegalArgumentException(
-                                "You cannot batch data with different input shapes", e);
+                                "You cannot batch data with different input shapes"
+                                        + currInput.getShape()
+                                        + " vs "
+                                        + kindDataShape,
+                                e);
                     }
                     if (!currInput.getDataType().equals(kindDataType)) {
                         throw new IllegalArgumentException(

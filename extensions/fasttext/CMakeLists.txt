@@ -1,11 +1,14 @@
-cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.6 FATAL_ERROR)
 project(jni_fasttext)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(JAVA_AWT_LIBRARY NotNeeded)
+set(JAVA_AWT_INCLUDE_PATH NotNeeded)
 find_package(JNI REQUIRED)
 find_path(UTILS_INCLUDE_DIR NAMES djl/utils.h PATHS ${PROJECT_SOURCE_DIR}/../../api/src/main/native REQUIRED)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 add_subdirectory(fastText)
 
 add_library(jni_fasttext SHARED src/main/native/ai_djl_fasttext_jni_FastTextLibrary.cc)

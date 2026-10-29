@@ -7,9 +7,8 @@ By default, cache directories are located at current user's home directory:
 - `.djl.ai/mxnet` is the default cache directory stores Apache MXNet engine native libraries
 - `.djl.ai/pytorch` is the default cache directory stores Pytorch engine native libraries
 - `.djl.ai/tensorflow` is the default cache directory stores TensorFlow engine native libraries
-- `.djl.ai/dlr` is the default cache directory stores Neo DLR engine native libraries
 - `.djl.ai/fasttext` is the default cache directory stores fastText native libraries
-- `.djl.ai/sentencepiece` is the default cache directory stores Sentenpiece native libraries
+- `.djl.ai/sentencepiece` is the default cache directory stores Sentencepiece native libraries
 
 *In the current version, DJL will not clean obsolete cache automatically in the current version.*
 User can clean up unused model or native engine manually.
@@ -23,3 +22,18 @@ Changing this variable will change the location for both model and engine native
 - `ENGINE_CACHE_DIR` is a system property or environment variable you can set to change the Engine cache location.
 For this option, the model directory won't change unless you also change the `DJL_CACHE_DIR`.
 
+## Other cache folders
+
+### ONNXRuntime
+
+ONNXRuntime will extract native libraries into system default temporary-file directory. 
+
+### Huggingface tokenizer
+
+If the `HF_HOME` or `HF_HUB_CACHE` environment variable is set, Huggingface tokenizer will store cache files in it.
+It is the responsibility of the user to make sure this path is correct. Otherwise, we try to use
+the default cache directory as defined for each OS:
+
+- macOS: `/Users/{user}/.cache/huggingface/hub`
+- linux: `/home/{user}/.cache/huggingface/hub`
+- windows: `C:\Users\{user}\.cache\huggingface\hub`

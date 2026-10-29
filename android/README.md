@@ -5,19 +5,23 @@ It has the following two modules:
 
 - Core package: contains some Image processing toolkit for Android user using DJL
 - PyTorch Native: contains DJL PyTorch Android native package
+- ONNXRuntime: contains DJL ONNXRuntime Android package
 
 ## Installation
 You need to have Android SDK and Android NDK installed on your machine.
 
 The minimum API level for DJL Android is 26.
 
-In gradle, you can include the snapshot repository and add the 4 modules in your dependencies:
+In gradle, you can add the 5 modules in your dependencies:
 
-```
+```groovy
 dependencies {
-    implementation "ai.djl:api:0.10.0"
-    implementation "ai.djl.android:core:0.10.0"
-    androidRuntimeOnly "ai.djl.pytorch:pytorch-engine:0.10.0"
-    androidRuntimeOnly "ai.djl.android:pytorch-native:0.10.0"
+    implementation platform("ai.djl:bom:0.39.0")
+
+    implementation "ai.djl:api"
+    implementation "ai.djl.android:core"
+    runtimeOnly "ai.djl.pytorch:pytorch-engine"
+    runtimeOnly "ai.djl.android:pytorch-native"
+    runtimeOnly "ai.djl.android:onnxruntime"
 }
 ```

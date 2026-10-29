@@ -23,6 +23,7 @@ import ai.djl.nn.convolutional.Conv2d;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.pooling.Pool;
+
 import java.util.Arrays;
 
 /**
@@ -169,7 +170,7 @@ public final class ResNetV1 {
      * @param builder the {@link Builder} with the necessary arguments
      * @return a {@link Block} that represents the required ResNet model
      */
-    public static Block resnet(Builder builder) {
+    public static SequentialBlock resnet(Builder builder) {
         int numStages = builder.units.length;
         long height = builder.imageShape.get(1);
         SequentialBlock resNet = new SequentialBlock();
@@ -299,7 +300,7 @@ public final class ResNetV1 {
          *
          * @return the {@link ResNetV1} block
          */
-        public Block build() {
+        public SequentialBlock build() {
             if (imageShape == null) {
                 throw new IllegalArgumentException("Must set imageShape");
             }

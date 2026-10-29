@@ -74,7 +74,7 @@ For larger topics which do not have a corresponding javadoc section, they should
 
 This project uses a gradle wrapper, so you don't have to install gradle on your machine. You can just call the gradle wrapper using the following command:
 
-```
+```bash
 ./gradlew
 ```
 
@@ -100,19 +100,19 @@ If you are developing with an IDE, you can run a test by selecting the test and 
 
 From the command line, you can run the following command to run a test:
 
-```
+```bash
 ./gradlew :<module>:run -Dmain=<class_name> --args ""
 ```
 
 For example, if you would like to run the complete integration test, you can use the following command:
 
-```
+```bash
 ./gradlew :integration:run -Dmain=ai.djl.integration.IntegrationTest
 ```
 
 To run an individual integration test from the command line, use the following: 
 
-```
+```bash
 ./gradlew :integration:run --args="-c <class_name> -m <method_name>"
 ```
 
@@ -134,7 +134,7 @@ Before you run any examples in IntelliJ, configure your Application template as 
 3. Change the "Working directory:" value to: "$MODULE_WORKING_DIR$".
 4. Select "OK" to save the template.
 
-Navigate to the 'examples' module. Open the class that you want to execute (e.g. ai.djl.examples.inference.ObjectDetection).
+Navigate to the 'examples' module. Open the class that you want to execute (e.g. ai.djl.examples.inference.cv.ObjectDetection).
 Select the triangle at the class declaration line. A popup menu appears with 3 items:
 
 - Run 'ObjectDetection.main()'
@@ -156,11 +156,11 @@ IntelliJ allows you to [customize the data view in the Debug Tools](https://www.
 You can create your own NDArray renderer as follows:
 ![](img/custom_debug_view.png)
 
-Please make sure to:
-
-- Check the "On-demand" option, which causes IntelliJ to only render the NDArray when you click on the variable.
-- Change the "Use following expression" field to something like [toDebugString(100, 10, 10, 20)](https://javadoc.io/static/ai.djl/api/0.10.0/ai/djl/ndarray/NDArray.html#toDebugString-int-int-int-int-)
+Opening the IDE Settings/Preferences (`⌘ ,`), in *Java Type Renderer* section, you can enable array display by:
+- Change the "Use following expression" field to `toDebugString(true)` to show NDArray content.
+- Change the "Use following expression" field to something like `toDebugString(100, 10, 10, 20, true)`.
 if you want to adjust the range of NDArray's debug output.
+- Check the "On-demand" option, if you want the IntelliJ to render the NDArray only on clicking the variable.
 
 ## Common Problems
 

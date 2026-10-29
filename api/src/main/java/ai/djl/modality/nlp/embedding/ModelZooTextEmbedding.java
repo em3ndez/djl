@@ -21,6 +21,7 @@ import ai.djl.repository.zoo.ZooModel;
 import ai.djl.translate.Batchifier;
 import ai.djl.translate.NoopTranslator;
 import ai.djl.translate.TranslateException;
+
 import java.util.List;
 
 /** A {@link WordEmbedding} using a {@link ZooModel}. */
@@ -48,7 +49,7 @@ public class ModelZooTextEmbedding implements TextEmbedding, AutoCloseable {
     /** {@inheritDoc} */
     @Override
     public long[] preprocessTextToEmbed(List<String> tokens) {
-        return tokens.stream().mapToLong(token -> embedding.embed(token)).toArray();
+        return tokens.stream().mapToLong(embedding::embed).toArray();
     }
 
     /** {@inheritDoc} */

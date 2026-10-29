@@ -23,11 +23,11 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.translate.Pipeline;
 import ai.djl.util.Progress;
 import ai.djl.util.Utils;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
@@ -35,9 +35,15 @@ import java.util.Map;
 /**
  * CIFAR10 image classification dataset from https://www.cs.toronto.edu/~kriz/cifar.html.
  *
+ * <p>It consists of 60,000 32x32 color images with 10 classes. It can train in a few hours with a
+ * GPU.
+ *
  * <p>Each sample is an image (in 3-D {@link NDArray}) with shape (32, 32, 3).
  */
 public final class Cifar10 extends ArrayDataset {
+
+    private static final String ARTIFACT_ID = "cifar10";
+    private static final String VERSION = "1.0";
 
     public static final int IMAGE_WIDTH = 32;
     public static final int IMAGE_HEIGHT = 32;
@@ -45,14 +51,13 @@ public final class Cifar10 extends ArrayDataset {
     public static final float[] NORMALIZE_MEAN = {0.4914f, 0.4822f, 0.4465f};
     public static final float[] NORMALIZE_STD = {0.2023f, 0.1994f, 0.2010f};
 
-    private static final String ARTIFACT_ID = "cifar10";
     // 3072 = 32 * 32 * 3, i.e. one image size, +1 here is label
     private static final int DATA_AND_LABEL_SIZE = IMAGE_HEIGHT * IMAGE_WIDTH * 3 + 1;
 
     private NDManager manager;
     private Usage usage;
 
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     Cifar10(Builder builder) {
@@ -60,8 +65,7 @@ public final class Cifar10 extends ArrayDataset {
         this.manager = builder.manager;
         this.manager.setName("cifar10");
         this.usage = builder.usage;
-        MRL mrl = MRL.dataset(CV.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.0");
+        mrl = builder.getMrl();
     }
 
     /**
@@ -80,8 +84,8 @@ public final class Cifar10 extends ArrayDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
 
         Map<String, Artifact.Item> map = artifact.getFiles();
         Artifact.Item item;
@@ -117,7 +121,7 @@ public final class Cifar10 extends ArrayDataset {
     }
 
     private NDArray readData(Artifact.Item item) throws IOException {
-        try (InputStream is = resource.getRepository().openStream(item, null)) {
+        try (InputStream is = mrl.getRepository().openStream(item, null)) {
             byte[] buf = Utils.toByteArray(is);
             int length = buf.length / DATA_AND_LABEL_SIZE;
             try (NDArray array =
@@ -222,6 +226,10 @@ public final class Cifar10 extends ArrayDataset {
          */
         public Cifar10 build() {
             return new Cifar10(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(CV.ANY, groupId, artifactId, VERSION);
         }
     }
 }

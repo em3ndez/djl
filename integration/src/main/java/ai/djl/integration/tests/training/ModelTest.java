@@ -14,6 +14,7 @@ package ai.djl.integration.tests.training;
 
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.ParameterList;
@@ -21,10 +22,13 @@ import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.convolutional.Conv2d;
 import ai.djl.nn.norm.BatchNorm;
 import ai.djl.testing.Assertions;
-import java.io.IOException;
-import java.nio.file.Paths;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 public class ModelTest {
 
@@ -33,8 +37,10 @@ public class ModelTest {
         SequentialBlock block = new SequentialBlock();
         block.add(Conv2d.builder().setKernelShape(new Shape(1, 1)).setFilters(10).build());
         block.add(BatchNorm.builder().build());
-        try (Model saveModel = Model.newInstance("saveModel");
-                Model loadModel = Model.newInstance("loadModel")) {
+        try (Model saveModel = Model.newInstance("saveModel", TestUtils.getEngine());
+                Model loadModel = Model.newInstance("loadModel", TestUtils.getEngine());
+                Model loadStreamModel =
+                        Model.newInstance("loadStreamModel", TestUtils.getEngine()); ) {
             block.initialize(saveModel.getNDManager(), DataType.FLOAT32, new Shape(1, 3, 32, 32));
             ParameterList savedParameters = block.getParameters();
             saveModel.setBlock(block);
@@ -44,6 +50,13 @@ public class ModelTest {
             loadModel.setBlock(block);
             loadModel.load(Paths.get("build/tmp/test/models"), "saveAndLoad");
             ParameterList loadedParameters = loadModel.getBlock().getParameters();
+            compareParameters(savedParameters, loadedParameters);
+
+            loadStreamModel.setBlock(block);
+            loadStreamModel.load(
+                    Files.newInputStream(
+                            Paths.get("build/tmp/test/models/saveAndLoad-0000.params")));
+            loadedParameters = loadStreamModel.getBlock().getParameters();
             compareParameters(savedParameters, loadedParameters);
         }
     }

@@ -15,8 +15,8 @@ package ai.djl.integration.tests.model_zoo;
 import ai.djl.Application;
 import ai.djl.MalformedModelException;
 import ai.djl.ModelException;
-import ai.djl.engine.Engine;
 import ai.djl.inference.Predictor;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.modality.Classifications;
 import ai.djl.modality.Classifications.Classification;
 import ai.djl.modality.Input;
@@ -30,19 +30,26 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import ai.djl.translate.TranslateException;
+import ai.djl.translate.Translator;
 import ai.djl.util.JsonUtils;
 import ai.djl.util.Utils;
 import ai.djl.util.ZipUtils;
+
 import com.google.gson.reflect.TypeToken;
+
+import org.testng.Assert;
+import org.testng.SkipException;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Test;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -51,10 +58,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
-import org.testng.Assert;
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Test;
 
 public class CustomTranslatorTest {
 
@@ -63,8 +66,8 @@ public class CustomTranslatorTest {
 
     @BeforeClass
     public void setup() throws IOException, ModelNotFoundException, MalformedModelException {
-        if (!"MXNet".equals(Engine.getInstance().getEngineName())) {
-            return;
+        if (!"MXNet".equals(TestUtils.getEngine())) {
+            return; // do not throw exception here
         }
 
         Utils.deleteQuietly(modelDir);
@@ -73,9 +76,10 @@ public class CustomTranslatorTest {
                 Criteria.builder()
                         .setTypes(Image.class, Classifications.class)
                         .optArtifactId("ai.djl.mxnet:mlp")
+                        .optEngine(TestUtils.getEngine())
                         .build();
 
-        try (ZooModel<Image, Classifications> model = ModelZoo.loadModel(criteria)) {
+        try (ZooModel<Image, Classifications> model = criteria.loadModel()) {
             Path symbolFile = modelDir.resolve("mlp-symbol.json");
             try (InputStream is = model.getArtifactAsStream("mlp-symbol.json")) {
                 Files.copy(is, symbolFile, StandardCopyOption.REPLACE_EXISTING);
@@ -106,9 +110,7 @@ public class CustomTranslatorTest {
     @Test
     public void testImageClassificationTranslator()
             throws IOException, ModelException, TranslateException {
-        if (!"MXNet".equals(Engine.getInstance().getEngineName())) {
-            return;
-        }
+        TestUtils.requiresEngine("MXNet");
 
         // load RawTranslator
         runRawTranslator();
@@ -119,7 +121,8 @@ public class CustomTranslatorTest {
         arguments.put("height", "28");
         arguments.put("flag", Image.Flag.GRAYSCALE.name());
         arguments.put("applySoftmax", "true");
-        runImageClassification(Application.CV.IMAGE_CLASSIFICATION, arguments);
+        runImageClassification(
+                Application.CV.IMAGE_CLASSIFICATION, arguments, "ImageServingTranslator");
 
         Path libDir = modelDir.resolve("lib");
         Path classesDir = libDir.resolve("classes");
@@ -135,7 +138,7 @@ public class CustomTranslatorTest {
         try (Writer writer = Files.newBufferedWriter(confFile)) {
             prop.store(writer, "");
         }
-        runImageClassification(Application.UNDEFINED, null);
+        runImageClassification(Application.UNDEFINED, null, "ImageServingTranslator");
 
         Path libsDir = modelDir.resolve("libs");
         Files.move(libDir, libsDir, StandardCopyOption.REPLACE_EXISTING);
@@ -144,44 +147,61 @@ public class CustomTranslatorTest {
         Path destFile = classesDir.resolve("MyTranslator.java");
         Files.copy(srcFile, destFile, StandardCopyOption.REPLACE_EXISTING);
 
-        // load translator from classes folder
-        runImageClassification(Application.UNDEFINED, null);
+        // Two separate opt-ins are needed for the cases below: one to compile the bundled .java
+        // translator, and one to load bundled class content at all. Compiled output is still
+        // bundled content, so the compile flag alone would produce a .class that is then ignored.
+        // The environment variables take precedence over the system properties, so an environment
+        // that pins either off would make the property a no-op and the assertions fail for an
+        // unrelated reason.
+        requireNotPinnedOff("DJL_COMPILE_JAVA");
+        requireNotPinnedOff("DJL_LOAD_BUNDLED_CLASSES");
+        System.setProperty("ai.djl.compile_java", "true");
+        System.setProperty("ai.djl.load_bundled_classes", "true");
+        try {
+            // load translator from classes folder
+            runImageClassification(Application.UNDEFINED, null, "MyTranslator");
 
-        Path jarFile = libsDir.resolve("example.jar");
-        ZipUtils.zip(classesDir, jarFile, false);
-        Utils.deleteQuietly(classesDir);
+            Path jarFile = libsDir.resolve("example.jar");
+            ZipUtils.zip(classesDir, jarFile, false);
+            Utils.deleteQuietly(classesDir);
 
-        // load translator from jar file
-        runImageClassification(Application.UNDEFINED, null);
+            // load translator from jar file
+            runImageClassification(Application.UNDEFINED, null, "MyTranslator");
+        } finally {
+            System.clearProperty("ai.djl.compile_java");
+            System.clearProperty("ai.djl.load_bundled_classes");
+        }
     }
 
     @Test
     public void testSsdTranslator() throws IOException, ModelException, TranslateException {
-        if (!"MXNet".equals(Engine.getInstance().getEngineName())) {
-            return;
-        }
+        TestUtils.requiresEngine("MXNet");
 
         Criteria<Image, DetectedObjects> c =
                 Criteria.builder()
                         .setTypes(Image.class, DetectedObjects.class)
                         .optArtifactId("ai.djl.mxnet:ssd")
+                        .optEngine(TestUtils.getEngine())
                         .build();
         String modelUrl;
-        try (ZooModel<Image, DetectedObjects> model = ModelZoo.loadModel(c)) {
+        try (ZooModel<Image, DetectedObjects> model = c.loadModel()) {
             modelUrl = model.getModelPath().toUri().toURL().toString();
         }
 
         Criteria<Input, Output> criteria =
                 Criteria.builder()
                         .setTypes(Input.class, Output.class)
-                        .optApplication(Application.CV.OBJECT_DETECTION)
                         .optModelUrls(modelUrl)
                         .optArgument("width", 512)
                         .optArgument("height", 512)
                         .optArgument("resize", true)
                         .optArgument("rescale", true)
                         .optArgument("synsetFileName", "classes.txt")
+                        .optArgument(
+                                "translatorFactory",
+                                "ai.djl.modality.cv.translator.SingleShotDetectionTranslatorFactory")
                         .optModelName("ssd_512_resnet50_v1_voc")
+                        .optEngine(TestUtils.getEngine())
                         .build();
 
         Path imageFile = Paths.get("../examples/src/test/resources/dog_bike_car.jpg");
@@ -190,50 +210,69 @@ public class CustomTranslatorTest {
             buf = Utils.toByteArray(is);
         }
 
-        try (ZooModel<Input, Output> model = ModelZoo.loadModel(criteria);
+        try (ZooModel<Input, Output> model = criteria.loadModel();
                 Predictor<Input, Output> predictor = model.newPredictor()) {
-            Input input = new Input("1");
-            input.addData(buf);
+            Input input = new Input();
+            input.add(buf);
             Output output = predictor.predict(input);
-            Assert.assertEquals(output.getRequestId(), "1");
-            String content = new String(output.getContent(), StandardCharsets.UTF_8);
+            Assert.assertEquals(output.getCode(), 200);
+            String content = output.getAsString(0);
             Type type = new TypeToken<List<Classification>>() {}.getType();
             List<Classification> result = JsonUtils.GSON.fromJson(content, type);
             Assert.assertEquals(result.get(0).getClassName(), "car");
         }
     }
 
-    private void runImageClassification(Application application, Map<String, Object> arguments)
+    /**
+     * Skips when the environment explicitly disables an opt-in this test needs, since the
+     * environment variable wins over the system property set below it.
+     *
+     * @param name the environment variable to check
+     */
+    private static void requireNotPinnedOff(String name) {
+        String value = Utils.getenv(name);
+        if (value != null && !Boolean.parseBoolean(value)) {
+            throw new SkipException(name + " is set to " + value + " in the environment");
+        }
+    }
+
+    private void runImageClassification(
+            Application application, Map<String, Object> arguments, String translatorName)
             throws IOException, ModelException, TranslateException {
         Criteria<Input, Output> criteria =
                 Criteria.builder()
                         .setTypes(Input.class, Output.class)
                         .optApplication(application)
                         .optArguments(arguments)
-                        .optModelUrls(modelDir.toUri().toURL().toString())
+                        .optModelPath(modelDir)
+                        .optEngine(TestUtils.getEngine())
                         .build();
 
-        try (ZooModel<Input, Output> model = ModelZoo.loadModel(criteria);
+        try (ZooModel<Input, Output> model = criteria.loadModel();
                 Predictor<Input, Output> predictor = model.newPredictor()) {
-            Input input = new Input("1");
-            input.addData("body", data);
+            Translator<Input, Output> translator = model.getTranslator();
+            Assert.assertEquals(translator.getClass().getSimpleName(), translatorName);
+
+            Input input = new Input();
+            input.add("data", data);
             Output output = predictor.predict(input);
-            Assert.assertEquals(output.getRequestId(), "1");
-            String content = new String(output.getContent(), StandardCharsets.UTF_8);
+            Assert.assertEquals(output.getCode(), 200);
+            String content = output.getAsString(0);
             Type type = new TypeToken<List<Classification>>() {}.getType();
             List<Classification> result = JsonUtils.GSON.fromJson(content, type);
             Assert.assertEquals(result.get(0).getClassName(), "0");
         }
     }
 
-    public void runRawTranslator() throws IOException, ModelException, TranslateException {
+    private void runRawTranslator() throws IOException, ModelException, TranslateException {
         Criteria<Input, Output> criteria =
                 Criteria.builder()
                         .setTypes(Input.class, Output.class)
-                        .optModelUrls(modelDir.toUri().toURL().toString())
+                        .optModelPath(modelDir)
+                        .optEngine(TestUtils.getEngine())
                         .build();
 
-        try (ZooModel<Input, Output> model = ModelZoo.loadModel(criteria);
+        try (ZooModel<Input, Output> model = criteria.loadModel();
                 Predictor<Input, Output> predictor = model.newPredictor()) {
             NDManager manager = model.getNDManager();
 
@@ -244,13 +283,13 @@ public class CustomTranslatorTest {
             array = NDImageUtils.toTensor(array).expandDims(0);
             NDList list = new NDList(array);
 
-            Input input = new Input("1");
-            input.addData(0, list.encode());
+            Input input = new Input();
+            input.add(list);
             Output output = predictor.predict(input);
-            Assert.assertEquals(output.getRequestId(), "1");
+            Assert.assertEquals(output.getCode(), 200);
 
             // manually post process
-            list = NDList.decode(manager, output.getContent());
+            list = output.getDataAsNDList(manager);
             NDArray probabilities = list.singletonOrThrow().get(0).softmax(0);
 
             List<String> classes = model.getArtifact("synset.txt", Utils::readLines);

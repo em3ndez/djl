@@ -10,7 +10,8 @@ elif [[ -n $(command -v sysctl) ]]; then
 fi
 PLATFORM=$(uname | tr '[:upper:]' '[:lower:]')
 
-VERSION=v0.1.92
+VERSION=$1
+ARCH=$2
 
 pushd $WORK_DIR
 if [ ! -d "sentencepiece" ];
@@ -34,9 +35,9 @@ popd
 
 # for nightly ci
 if [[ $PLATFORM == 'darwin' ]]; then
-  mkdir -p build/jnilib/osx-x86_64
-  cp -f build/libsentencepiece_native.dylib build/jnilib/osx-x86_64/
+  mkdir -p build/jnilib/osx-$ARCH
+  cp -f build/libsentencepiece_native.dylib build/jnilib/osx-$ARCH/
 elif [[ $PLATFORM == 'linux' ]]; then
-  mkdir -p build/jnilib/linux-x86_64
-  cp -f build/libsentencepiece_native.so build/jnilib/linux-x86_64/
+  mkdir -p build/jnilib/linux-$ARCH
+  cp -f build/libsentencepiece_native.so build/jnilib/linux-$ARCH/
 fi

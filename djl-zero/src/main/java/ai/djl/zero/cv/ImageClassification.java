@@ -18,6 +18,7 @@ import ai.djl.Model;
 import ai.djl.basicdataset.cv.classification.ImageClassificationDataset;
 import ai.djl.basicdataset.cv.classification.ImageNet;
 import ai.djl.basicdataset.cv.classification.Mnist;
+import ai.djl.basicmodelzoo.cv.classification.MobileNetV2;
 import ai.djl.basicmodelzoo.cv.classification.ResNetV1;
 import ai.djl.modality.Classifications;
 import ai.djl.modality.cv.Image;
@@ -25,7 +26,6 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
@@ -39,6 +39,7 @@ import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
 import ai.djl.zero.Performance;
 import ai.djl.zero.RequireZoo;
+
 import java.io.IOException;
 import java.util.List;
 
@@ -87,7 +88,7 @@ public final class ImageClassification {
                 throw new IllegalArgumentException("Unknown classes");
         }
 
-        return ModelZoo.loadModel(criteria.build());
+        return criteria.build().loadModel();
     }
 
     /**
@@ -129,12 +130,21 @@ public final class ImageClassification {
         // Determine the layers based on performance
         int numLayers = performance.switchPerformance(18, 50, 152);
 
-        Block block =
-                ResNetV1.builder()
-                        .setImageShape(imageShape)
-                        .setNumLayers(numLayers)
-                        .setOutSize(classes.size())
-                        .build();
+        Block block;
+
+        if (performance.equals(Performance.FAST)) {
+            // for small and fast cases, build a MobileNetV2
+            block = MobileNetV2.builder().setOutSize(classes.size()).build();
+        } else {
+            // for large cases, build a ResNet
+            block =
+                    ResNetV1.builder()
+                            .setImageShape(imageShape)
+                            .setNumLayers(numLayers)
+                            .setOutSize(classes.size())
+                            .build();
+        }
+
         Model model = Model.newInstance("ImageClassification");
         model.setBlock(block);
 
@@ -148,7 +158,8 @@ public final class ImageClassification {
             EasyTrain.fit(trainer, 35, trainDataset, validateDataset);
         }
 
-        Translator<Image, Classifications> translator = dataset.makeTranslator();
+        Translator<Image, Classifications> translator =
+                dataset.matchingTranslatorOptions().option(Image.class, Classifications.class);
         return new ZooModel<>(model, translator);
     }
 

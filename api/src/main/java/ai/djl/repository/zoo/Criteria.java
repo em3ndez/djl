@@ -14,16 +14,27 @@ package ai.djl.repository.zoo;
 
 import ai.djl.Application;
 import ai.djl.Device;
-import ai.djl.Model;
+import ai.djl.MalformedModelException;
 import ai.djl.nn.Block;
+import ai.djl.translate.DefaultTranslatorFactory;
 import ai.djl.translate.Translator;
 import ai.djl.translate.TranslatorFactory;
 import ai.djl.util.JsonUtils;
 import ai.djl.util.Progress;
+
+import com.google.gson.Gson;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The {@code Criteria} class contains search criteria to look up a {@link ZooModel}.
@@ -42,8 +53,8 @@ import java.util.Map;
  *         .build();
  * </pre>
  *
- * <p>See <a href="http://docs.djl.ai/docs/load_model.html#criteria-class">Model loading</a> for
- * more detail.
+ * <p>See <a href="https://docs.djl.ai/master/docs/load_model.html#criteria-class">Model loading</a>
+ * for more detail.
  *
  * @param <I> the model input type
  * @param <O> the model output type
@@ -61,10 +72,11 @@ public class Criteria<I, O> {
     private Map<String, String> filters;
     private Map<String, Object> arguments;
     private Map<String, String> options;
-    private TranslatorFactory<I, O> factory;
+    private TranslatorFactory factory;
     private Block block;
     private String modelName;
     private Progress progress;
+    private List<ModelLoader> resolvedLoaders;
 
     Criteria(Builder<I, O> builder) {
         this.application = builder.application;
@@ -82,6 +94,74 @@ public class Criteria<I, O> {
         this.block = builder.block;
         this.modelName = builder.modelName;
         this.progress = builder.progress;
+    }
+
+    /**
+     * Returns {@code true} of the model artifacts has been downloaded.
+     *
+     * @return {@code true} of the model artifacts has been downloaded
+     * @throws IOException for various exceptions loading data from the repository
+     * @throws ModelNotFoundException if no model with the specified criteria is found
+     */
+    public boolean isDownloaded() throws IOException, ModelNotFoundException {
+        if (resolvedLoaders == null) {
+            resolvedLoaders = resolveModelLoaders();
+        }
+
+        for (ModelLoader loader : resolvedLoaders) {
+            if (!loader.isDownloaded(this)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Downloads the model artifacts that matches this criteria.
+     *
+     * @throws IOException for various exceptions loading data from the repository
+     * @throws ModelNotFoundException if no model with the specified criteria is found
+     */
+    public void downloadModel() throws ModelNotFoundException, IOException {
+        if (!isDownloaded()) {
+            for (ModelLoader loader : resolvedLoaders) {
+                loader.downloadModel(this, progress);
+            }
+        }
+    }
+
+    /**
+     * Loads the {@link ZooModel} that matches this criteria.
+     *
+     * @return the model that matches the criteria
+     * @throws IOException for various exceptions loading data from the repository
+     * @throws ModelNotFoundException if no model with the specified criteria is found
+     * @throws MalformedModelException if the model data is malformed
+     */
+    public ZooModel<I, O> loadModel()
+            throws IOException, ModelNotFoundException, MalformedModelException {
+        if (resolvedLoaders == null) {
+            resolvedLoaders = resolveModelLoaders();
+        }
+
+        Logger logger = LoggerFactory.getLogger(ModelZoo.class);
+        Exception lastException = null;
+        for (ModelLoader loader : resolvedLoaders) {
+            try {
+                return loader.loadModel(this);
+            } catch (ModelNotFoundException e) {
+                lastException = e;
+                logger.trace("", e);
+                logger.debug(
+                        "{} for ModelLoader: {}:{}",
+                        e.getMessage(),
+                        loader.getGroupId(),
+                        loader.getArtifactId());
+            }
+        }
+        throw new ModelNotFoundException(
+                "No model with the specified URI or the matching Input/Output type is found.",
+                lastException);
     }
 
     /**
@@ -188,7 +268,7 @@ public class Criteria<I, O> {
      *
      * @return the optional {@link TranslatorFactory} to be used for {@link ZooModel}
      */
-    public TranslatorFactory<I, O> getTranslatorFactory() {
+    public TranslatorFactory getTranslatorFactory() {
         return factory;
     }
 
@@ -222,13 +302,13 @@ public class Criteria<I, O> {
     /** {@inheritDoc} */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder(128);
+        StringBuilder sb = new StringBuilder(200);
         sb.append("Criteria:\n");
         if (application != null) {
             sb.append("\tApplication: ").append(application).append('\n');
         }
-        sb.append("\tInput: ").append(inputClass).append('\n');
-        sb.append("\tOutput: ").append(outputClass).append('\n');
+        sb.append("\tInput: ").append(inputClass);
+        sb.append("\n\tOutput: ").append(outputClass).append('\n');
         if (engine != null) {
             sb.append("\tEngine: ").append(engine).append('\n');
         }
@@ -245,7 +325,8 @@ public class Criteria<I, O> {
             sb.append("\tFilter: ").append(JsonUtils.GSON.toJson(filters)).append('\n');
         }
         if (arguments != null) {
-            sb.append("\tArguments: ").append(JsonUtils.GSON.toJson(arguments)).append('\n');
+            Gson gson = JsonUtils.builder().excludeFieldsWithoutExposeAnnotation().create();
+            sb.append("\tArguments: ").append(gson.toJson(arguments)).append('\n');
         }
         if (options != null) {
             sb.append("\tOptions: ").append(JsonUtils.GSON.toJson(options)).append('\n');
@@ -254,6 +335,29 @@ public class Criteria<I, O> {
             sb.append("\tNo translator supplied\n");
         }
         return sb.toString();
+    }
+
+    /**
+     * Creates a new {@link Builder} which starts with the values of this {@link Criteria}.
+     *
+     * @return a new {@link Builder}
+     */
+    public Builder<I, O> toBuilder() {
+        return Criteria.builder()
+                .setTypes(inputClass, outputClass)
+                .optApplication(application)
+                .optEngine(engine)
+                .optDevice(device)
+                .optGroupId(groupId)
+                .optArtifactId(artifactId)
+                .optModelZoo(modelZoo)
+                .optFilters(filters)
+                .optArguments(arguments)
+                .optOptions(options)
+                .optTranslatorFactory(factory)
+                .optBlock(block)
+                .optModelName(modelName)
+                .optProgress(progress);
     }
 
     /**
@@ -266,6 +370,82 @@ public class Criteria<I, O> {
      */
     public static Builder<?, ?> builder() {
         return new Builder<>();
+    }
+
+    private List<ModelLoader> resolveModelLoaders() throws ModelNotFoundException {
+        if (inputClass == null || outputClass == null) {
+            throw new IllegalArgumentException("inputClass and outputClass are required.");
+        }
+
+        Logger logger = LoggerFactory.getLogger(ModelZoo.class);
+        logger.debug("Loading model with {}", this);
+
+        List<ModelZoo> list = new ArrayList<>();
+        if (modelZoo != null) {
+            logger.debug("Searching model in specified model zoo: {}", modelZoo.getGroupId());
+            if (groupId != null && !modelZoo.getGroupId().equals(groupId)) {
+                throw new ModelNotFoundException(
+                        "groupId conflict with ModelZoo criteria."
+                                + modelZoo.getGroupId()
+                                + " v.s. "
+                                + groupId);
+            }
+            Set<String> supportedEngine = modelZoo.getSupportedEngines();
+            if (engine != null && !supportedEngine.contains(engine)) {
+                throw new ModelNotFoundException(
+                        "ModelZoo doesn't support specified engine: " + engine);
+            }
+            list.add(modelZoo);
+        } else {
+            for (ModelZoo zoo : ModelZoo.listModelZoo()) {
+                if (groupId != null && !zoo.getGroupId().equals(groupId)) {
+                    // filter out ModelZoo by groupId
+                    logger.debug("Ignore ModelZoo {} by groupId: {}", zoo.getGroupId(), groupId);
+                    continue;
+                }
+                Set<String> supportedEngine = zoo.getSupportedEngines();
+                if (engine != null && !supportedEngine.contains(engine)) {
+                    logger.debug("Ignore ModelZoo {} by engine: {}", zoo.getGroupId(), engine);
+                    continue;
+                }
+                list.add(zoo);
+            }
+        }
+
+        List<ModelLoader> loaders = new ArrayList<>();
+        for (ModelZoo zoo : list) {
+            String loaderGroupId = zoo.getGroupId();
+            for (ModelLoader loader : zoo.getModelLoaders()) {
+                Application app = loader.getApplication();
+                String loaderArtifactId = loader.getArtifactId();
+                logger.debug("Checking ModelLoader: {}", loader);
+                if (artifactId != null && !artifactId.equals(loaderArtifactId)) {
+                    // filter out by model loader artifactId
+                    logger.debug(
+                            "artifactId mismatch for ModelLoader: {}:{}",
+                            loaderGroupId,
+                            loaderArtifactId);
+                    continue;
+                }
+                if (application != Application.UNDEFINED
+                        && app != Application.UNDEFINED
+                        && !app.matches(application)) {
+                    // filter out ModelLoader by application
+                    logger.debug(
+                            "application mismatch for ModelLoader: {}:{}",
+                            loaderGroupId,
+                            loaderArtifactId);
+                    continue;
+                }
+
+                loaders.add(loader);
+            }
+        }
+
+        if (loaders.isEmpty()) {
+            throw new ModelNotFoundException("No model matching the criteria is found.");
+        }
+        return loaders;
     }
 
     /** A Builder to construct a {@code Criteria}. */
@@ -282,15 +462,17 @@ public class Criteria<I, O> {
         Map<String, String> filters;
         Map<String, Object> arguments;
         Map<String, String> options;
-        TranslatorFactory<I, O> factory;
+        TranslatorFactory factory;
         Block block;
         String modelName;
         Progress progress;
+        Translator<I, O> translator;
 
         Builder() {
             application = Application.UNDEFINED;
         }
 
+        @SuppressWarnings("unchecked")
         private Builder(Class<I> inputClass, Class<O> outputClass, Builder<?, ?> parent) {
             this.inputClass = inputClass;
             this.outputClass = outputClass;
@@ -298,12 +480,16 @@ public class Criteria<I, O> {
             engine = parent.engine;
             device = parent.device;
             groupId = parent.groupId;
+            artifactId = parent.artifactId;
+            modelZoo = parent.modelZoo;
             filters = parent.filters;
             arguments = parent.arguments;
             options = parent.options;
+            factory = parent.factory;
             block = parent.block;
             modelName = parent.modelName;
             progress = parent.progress;
+            translator = (Translator<I, O>) parent.translator;
         }
 
         /**
@@ -370,10 +556,10 @@ public class Criteria<I, O> {
          * @return this {@code Builder}
          */
         public Builder<I, O> optArtifactId(String artifactId) {
-            if (artifactId.contains(":")) {
-                String[] tokens = artifactId.split(":");
-                groupId = tokens[0];
-                this.artifactId = tokens[1];
+            if (artifactId != null && artifactId.contains(":")) {
+                String[] tokens = artifactId.split(":", -1);
+                groupId = tokens[0].isEmpty() ? null : tokens[0];
+                this.artifactId = tokens[1].isEmpty() ? null : tokens[1];
             } else {
                 this.artifactId = artifactId;
             }
@@ -387,7 +573,9 @@ public class Criteria<I, O> {
          * @return this {@code Builder}
          */
         public Builder<I, O> optModelUrls(String modelUrls) {
-            this.modelZoo = new DefaultModelZoo(modelUrls);
+            if (modelUrls != null) {
+                this.modelZoo = new DefaultModelZoo(modelUrls);
+            }
             return this;
         }
 
@@ -396,10 +584,15 @@ public class Criteria<I, O> {
          *
          * @param modelPath the path to the model folder/files
          * @return this {@code Builder}
-         * @throws MalformedURLException wrong path format
          */
-        public Builder<I, O> optModelPath(Path modelPath) throws MalformedURLException {
-            this.modelZoo = new DefaultModelZoo(modelPath.toUri().toURL().toString());
+        public Builder<I, O> optModelPath(Path modelPath) {
+            if (modelPath != null) {
+                try {
+                    this.modelZoo = new DefaultModelZoo(modelPath.toUri().toURL().toString());
+                } catch (MalformedURLException e) {
+                    throw new AssertionError("Invalid model path: " + modelPath, e);
+                }
+            }
             return this;
         }
 
@@ -521,7 +714,8 @@ public class Criteria<I, O> {
          * @return this {@code Builder}
          */
         public Builder<I, O> optTranslator(Translator<I, O> translator) {
-            this.factory = new TranslatorFactorImpl<>(translator);
+            this.factory = null;
+            this.translator = translator;
             return this;
         }
 
@@ -531,7 +725,8 @@ public class Criteria<I, O> {
          * @param factory the override {@code TranslatorFactory}
          * @return this {@code Builder}
          */
-        public Builder<I, O> optTranslatorFactory(TranslatorFactory<I, O> factory) {
+        public Builder<I, O> optTranslatorFactory(TranslatorFactory factory) {
+            this.translator = null;
             this.factory = factory;
             return this;
         }
@@ -553,22 +748,12 @@ public class Criteria<I, O> {
          * @return the {@link Criteria} instance
          */
         public Criteria<I, O> build() {
+            if (factory == null && translator != null) {
+                DefaultTranslatorFactory f = new DefaultTranslatorFactory();
+                f.registerTranslator(inputClass, outputClass, translator);
+                factory = f;
+            }
             return new Criteria<>(this);
-        }
-    }
-
-    private static final class TranslatorFactorImpl<I, O> implements TranslatorFactory<I, O> {
-
-        private Translator<I, O> translator;
-
-        public TranslatorFactorImpl(Translator<I, O> translator) {
-            this.translator = translator;
-        }
-
-        /** {@inheritDoc} */
-        @Override
-        public Translator<I, O> newInstance(Model model, Map<String, ?> arguments) {
-            return translator;
         }
     }
 }

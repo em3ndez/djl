@@ -12,11 +12,11 @@
  */
 package ai.djl.modality.cv.translator;
 
-import ai.djl.Model;
 import ai.djl.modality.cv.output.DetectedObjects;
 import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.NDManager;
-import java.io.IOException;
+import ai.djl.translate.ArgumentsUtil;
+import ai.djl.translate.TranslatorContext;
+
 import java.util.List;
 import java.util.Map;
 
@@ -29,8 +29,8 @@ public abstract class ObjectDetectionTranslator extends BaseImageTranslator<Dete
     protected float threshold;
     private SynsetLoader synsetLoader;
     protected List<String> classes;
-    protected double imageWidth;
-    protected double imageHeight;
+    protected boolean applyRatio;
+    protected boolean removePadding;
 
     /**
      * Creates the {@link ObjectDetectionTranslator} from the given builder.
@@ -41,15 +41,15 @@ public abstract class ObjectDetectionTranslator extends BaseImageTranslator<Dete
         super(builder);
         this.threshold = builder.threshold;
         this.synsetLoader = builder.synsetLoader;
-        this.imageWidth = builder.imageWidth;
-        this.imageHeight = builder.imageHeight;
+        this.applyRatio = builder.applyRatio;
+        this.removePadding = builder.removePadding;
     }
 
     /** {@inheritDoc} */
     @Override
-    public void prepare(NDManager manager, Model model) throws IOException {
+    public void prepare(TranslatorContext ctx) throws Exception {
         if (classes == null) {
-            classes = synsetLoader.load(model);
+            classes = synsetLoader.load(ctx.getModel());
         }
     }
 
@@ -59,8 +59,8 @@ public abstract class ObjectDetectionTranslator extends BaseImageTranslator<Dete
             extends ClassificationBuilder<T> {
 
         protected float threshold = 0.2f;
-        protected double imageWidth;
-        protected double imageHeight;
+        protected boolean applyRatio;
+        protected boolean removePadding;
 
         /**
          * Sets the threshold for prediction accuracy.
@@ -76,44 +76,33 @@ public abstract class ObjectDetectionTranslator extends BaseImageTranslator<Dete
         }
 
         /**
-         * Sets the optional rescale size.
+         * Determine Whether to divide output object width/height on the inference result. Default
+         * false.
          *
-         * @param imageWidth the width to rescale images to
-         * @param imageHeight the height to rescale images to
+         * <p>DetectedObject value should always bring a ratio based on the width/height instead of
+         * actual width/height. Most of the model will produce ratio as the inference output. This
+         * function is aimed to cover those who produce the pixel value. Make this to true to divide
+         * the width/height in postprocessing in order to get ratio in detectedObjects.
+         *
+         * @param value whether to apply ratio
          * @return this builder
          */
-        public T optRescaleSize(double imageWidth, double imageHeight) {
-            this.imageWidth = imageWidth;
-            this.imageHeight = imageHeight;
+        public T optApplyRatio(boolean value) {
+            this.applyRatio = value;
             return self();
-        }
-
-        /**
-         * Get resized image width.
-         *
-         * @return image width
-         */
-        public double getImageWidth() {
-            return imageWidth;
-        }
-
-        /**
-         * Get resized image height.
-         *
-         * @return image height
-         */
-        public double getImageHeight() {
-            return imageHeight;
         }
 
         /** {@inheritDoc} */
         @Override
         protected void configPostProcess(Map<String, ?> arguments) {
             super.configPostProcess(arguments);
-            if (getBooleanValue(arguments, "rescale", false)) {
-                optRescaleSize(width, height);
+            if (ArgumentsUtil.booleanValue(arguments, "optApplyRatio")
+                    || ArgumentsUtil.booleanValue(arguments, "applyRatio")) {
+                optApplyRatio(true);
             }
-            threshold = getFloatValue(arguments, "threshold", 0.2f);
+            threshold = ArgumentsUtil.floatValue(arguments, "threshold", 0.2f);
+            String centerFit = ArgumentsUtil.stringValue(arguments, "centerFit", "false");
+            removePadding = "true".equals(centerFit);
         }
     }
 }

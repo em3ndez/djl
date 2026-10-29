@@ -22,6 +22,7 @@ import ai.djl.training.Trainer;
 import ai.djl.training.TrainingConfig;
 import ai.djl.translate.Translator;
 import ai.djl.util.PairList;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -134,6 +135,27 @@ public interface Model extends AutoCloseable {
             throws IOException, MalformedModelException;
 
     /**
+     * Loads the model from the {@code InputStream}.
+     *
+     * @param is the {@code InputStream} to load the model from
+     * @throws IOException when IO operation fails in loading a resource
+     * @throws MalformedModelException if model file is corrupted
+     */
+    default void load(InputStream is) throws IOException, MalformedModelException {
+        load(is, null);
+    }
+
+    /**
+     * Loads the model from the {@code InputStream} with the options provided.
+     *
+     * @param is the {@code InputStream} to load the model from
+     * @param options engine specific load model options, see documentation for each engine
+     * @throws IOException when IO operation fails in loading a resource
+     * @throws MalformedModelException if model file is corrupted
+     */
+    void load(InputStream is, Map<String, ?> options) throws IOException, MalformedModelException;
+
+    /**
      * Saves the model to the specified {@code modelPath} with the name provided.
      *
      * @param modelPath the directory or file path of the model location
@@ -171,12 +193,34 @@ public interface Model extends AutoCloseable {
     String getName();
 
     /**
-     * Gets the property of the model based on property name.
+     * Returns the model's properties.
+     *
+     * @return the model's properties
+     */
+    Map<String, String> getProperties();
+
+    /**
+     * Returns the property of the model based on property name.
      *
      * @param key the name of the property
      * @return the value of the property
      */
     String getProperty(String key);
+
+    /**
+     * Returns the property of the model based on property name.
+     *
+     * @param key the name of the property
+     * @param defValue the default value if key not found
+     * @return the value of the property
+     */
+    default String getProperty(String key, String defValue) {
+        String value = getProperty(key);
+        if (value == null || value.isEmpty()) {
+            return defValue;
+        }
+        return value;
+    }
 
     /**
      * Sets a property to the model.
@@ -190,11 +234,42 @@ public interface Model extends AutoCloseable {
     void setProperty(String key, String value);
 
     /**
+     * Returns the property of the model based on property name.
+     *
+     * @param key the name of the property
+     * @param defValue the default value if key not found
+     * @return the value of the property
+     */
+    default int intProperty(String key, int defValue) {
+        String value = getProperty(key);
+        if (value == null || value.isEmpty()) {
+            return defValue;
+        }
+        return Integer.parseInt(value);
+    }
+
+    /**
+     * Returns the property of the model based on property name.
+     *
+     * @param key the name of the property
+     * @param defValue the default value if key not found
+     * @return the value of the property
+     */
+    default long longProperty(String key, long defValue) {
+        String value = getProperty(key);
+        if (value == null || value.isEmpty()) {
+            return defValue;
+        }
+        return Integer.parseInt(value);
+    }
+
+    /**
      * Gets the {@link NDManager} from the model.
      *
      * @return the {@link NDManager}
      */
     NDManager getNDManager();
+
     /**
      * Creates a new {@link Trainer} instance for a Model.
      *
@@ -204,14 +279,27 @@ public interface Model extends AutoCloseable {
     Trainer newTrainer(TrainingConfig trainingConfig);
 
     /**
-     * Creates a new Predictor based on the model.
+     * Creates a new Predictor based on the model on the current device.
      *
      * @param translator the object used for pre-processing and postprocessing
      * @param <I> the input object for pre-processing
      * @param <O> the output object from postprocessing
      * @return an instance of {@code Predictor}
      */
-    <I, O> Predictor<I, O> newPredictor(Translator<I, O> translator);
+    default <I, O> Predictor<I, O> newPredictor(Translator<I, O> translator) {
+        return newPredictor(translator, getNDManager().getDevice());
+    }
+
+    /**
+     * Creates a new Predictor based on the model.
+     *
+     * @param translator the object used for pre-processing and postprocessing
+     * @param device the device to use for prediction
+     * @param <I> the input object for pre-processing
+     * @param <O> the output object from postprocessing
+     * @return an instance of {@code Predictor}
+     */
+    <I, O> Predictor<I, O> newPredictor(Translator<I, O> translator, Device device);
 
     /**
      * Returns the input descriptor of the model.

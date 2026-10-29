@@ -20,6 +20,7 @@ import ai.djl.nn.Block;
 import ai.djl.nn.Parameter;
 import ai.djl.nn.ParameterList;
 import ai.djl.util.Pair;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 
@@ -57,6 +58,7 @@ public abstract class RecurrentBlock extends AbstractBlock {
      *
      * @param builder the {@code Builder} that has the necessary configurations
      */
+    @SuppressWarnings("this-escape")
     public RecurrentBlock(BaseBuilder<?> builder) {
         super(VERSION);
         stateSize = builder.stateSize;
@@ -67,7 +69,10 @@ public abstract class RecurrentBlock extends AbstractBlock {
         bidirectional = builder.bidirectional;
         returnState = builder.returnState;
 
-        Parameter.Type[] parameterTypes = {Parameter.Type.WEIGHT, Parameter.Type.BIAS};
+        Parameter.Type[] parameterTypes =
+                hasBiases
+                        ? new Parameter.Type[] {Parameter.Type.WEIGHT, Parameter.Type.BIAS}
+                        : new Parameter.Type[] {Parameter.Type.WEIGHT};
         String[] directions = {"l"};
         if (builder.bidirectional) {
             directions = new String[] {"l", "r"};
@@ -142,12 +147,12 @@ public abstract class RecurrentBlock extends AbstractBlock {
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
+    public void loadMetadata(byte loadVersion, DataInputStream is)
             throws IOException, MalformedModelException {
-        if (version == VERSION) {
+        if (loadVersion == version) {
             readInputShapes(is);
-        } else if (version != 1) {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
+        } else if (loadVersion != 1) {
+            throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
     }
 

@@ -28,8 +28,7 @@ public class MyTranslator implements ServingTranslator {
 
     @Override
     public NDList processInput(TranslatorContext ctx, Input input) throws Exception {
-        ctx.setAttachment("input", input);
-        byte[] data = input.getContent().valueAt(0);
+        byte[] data = input.getAsBytes(0);
         ImageFactory factory = ImageFactory.getInstance();
         Image image = factory.fromInputStream(new ByteArrayInputStream(data));
 
@@ -47,20 +46,19 @@ public class MyTranslator implements ServingTranslator {
         probabilitiesNd = probabilitiesNd.softmax(0);
         Classifications classifications = new Classifications(classes, probabilitiesNd);
 
-        Input input = (Input) ctx.getAttachment("input");
-        Output output = new Output(input.getRequestId(), 200, "OK");
-        output.setContent(classifications.toJson());
+        Output output = new Output(200, "OK");
+        output.add(classifications.toJson());
         return output;
     }
 
     @Override
-    public void setArguments(Map<String, Object> arguments) {
+    public void setArguments(Map<String, ?> arguments) {
     }
 
     @Override
-    public void prepare(NDManager manager, Model model) throws IOException {
+    public void prepare(TranslatorContext ctx) throws IOException {
         if (classes == null) {
-            classes = model.getArtifact("synset.txt", Utils::readLines);
+            classes = ctx.getModel().getArtifact("synset.txt", Utils::readLines);
         }
     }
 

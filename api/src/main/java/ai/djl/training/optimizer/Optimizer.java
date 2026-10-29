@@ -14,6 +14,7 @@ package ai.djl.training.optimizer;
 
 import ai.djl.Device;
 import ai.djl.ndarray.NDArray;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -74,6 +75,16 @@ public abstract class Optimizer {
      */
     public static Adam.Builder adam() {
         return new Adam.Builder();
+    }
+
+    /**
+     * Returns a new instance of {@link ai.djl.training.optimizer.AdamW.Builder} that can build an
+     * {@link AdamW} optimizer.
+     *
+     * @return the {@link AdamW} {@link ai.djl.training.optimizer.AdamW.Builder}
+     */
+    public static AdamW.Builder adamW() {
+        return new AdamW.Builder();
     }
 
     /**

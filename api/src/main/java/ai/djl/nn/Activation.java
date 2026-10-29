@@ -13,6 +13,7 @@
 package ai.djl.nn;
 
 import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDArrays;
 import ai.djl.ndarray.NDList;
 import ai.djl.nn.core.Prelu;
 
@@ -55,6 +56,30 @@ public final class Activation {
      */
     public static NDList relu(NDList arrays) {
         return new NDList(arrays.singletonOrThrow().getNDArrayInternal().relu());
+    }
+
+    /**
+     * Applies ReLU6 activation on the input {@link NDArray}.
+     *
+     * <p>ReLU6 is defined by: \( y = min(6,max(0, x)) \)
+     *
+     * @param array the input singleton {@link NDArray}
+     * @return the {@link NDArray} after applying ReLU6 activation
+     */
+    public static NDArray relu6(NDArray array) {
+        return NDArrays.minimum(6, array.getNDArrayInternal().relu());
+    }
+
+    /**
+     * Applies ReLU6 activation on the input singleton {@link NDList}.
+     *
+     * <p>ReLU6 is defined by: \( y = min(6,max(0, x)) \)
+     *
+     * @param arrays the input singleton {@link NDList}
+     * @return the singleton {@link NDList} after applying ReLU6 activation
+     */
+    public static NDList relu6(NDList arrays) {
+        return new NDList(relu6(arrays.singletonOrThrow()));
     }
 
     /**
@@ -313,7 +338,18 @@ public final class Activation {
      *     function
      */
     public static Block reluBlock() {
-        return new LambdaBlock(Activation::relu);
+        return new LambdaBlock(Activation::relu, "ReLU");
+    }
+
+    /**
+     * Creates a {@link LambdaBlock} that applies the {@link #relu6(NDList) ReLU6} activation
+     * function in its forward function.
+     *
+     * @return the {@link LambdaBlock} that applies the {@link #relu6(NDList) ReLU} activation
+     *     function
+     */
+    public static Block relu6Block() {
+        return new LambdaBlock(Activation::relu6, "ReLU6");
     }
 
     /**
@@ -324,7 +360,7 @@ public final class Activation {
      *     function
      */
     public static Block sigmoidBlock() {
-        return new LambdaBlock(Activation::sigmoid);
+        return new LambdaBlock(Activation::sigmoid, "sigmoid");
     }
 
     /**
@@ -335,7 +371,7 @@ public final class Activation {
      *     function
      */
     public static Block tanhBlock() {
-        return new LambdaBlock(Activation::tanh);
+        return new LambdaBlock(Activation::tanh, "Tanh");
     }
 
     /**
@@ -346,7 +382,7 @@ public final class Activation {
      *     function
      */
     public static Block softPlusBlock() {
-        return new LambdaBlock(Activation::softPlus);
+        return new LambdaBlock(Activation::softPlus, "softPlus");
     }
 
     /**
@@ -357,7 +393,7 @@ public final class Activation {
      *     function
      */
     public static Block softSignBlock() {
-        return new LambdaBlock(Activation::softSign);
+        return new LambdaBlock(Activation::softSign, "softSign");
     }
 
     /**
@@ -369,7 +405,7 @@ public final class Activation {
      *     activation function
      */
     public static Block leakyReluBlock(float alpha) {
-        return new LambdaBlock(arrays -> Activation.leakyRelu(arrays, alpha));
+        return new LambdaBlock(arrays -> Activation.leakyRelu(arrays, alpha), "LeakyReLU");
     }
 
     /**
@@ -381,7 +417,7 @@ public final class Activation {
      *     function
      */
     public static Block eluBlock(float alpha) {
-        return new LambdaBlock(arrays -> Activation.elu(arrays, alpha));
+        return new LambdaBlock(arrays -> Activation.elu(arrays, alpha), "ELU");
     }
 
     /**
@@ -392,7 +428,7 @@ public final class Activation {
      *     function
      */
     public static Block seluBlock() {
-        return new LambdaBlock(Activation::selu);
+        return new LambdaBlock(Activation::selu, "SELU");
     }
 
     /**
@@ -403,7 +439,7 @@ public final class Activation {
      *     function
      */
     public static Block geluBlock() {
-        return new LambdaBlock(Activation::gelu);
+        return new LambdaBlock(Activation::gelu, "GELU");
     }
 
     /**
@@ -415,7 +451,7 @@ public final class Activation {
      *     activation function
      */
     public static Block swishBlock(float beta) {
-        return new LambdaBlock(arrays -> Activation.swish(arrays, beta));
+        return new LambdaBlock(arrays -> Activation.swish(arrays, beta), "Swish");
     }
 
     /**
@@ -426,7 +462,7 @@ public final class Activation {
      *     function
      */
     public static Block mishBlock() {
-        return new LambdaBlock(Activation::mish);
+        return new LambdaBlock(Activation::mish, "Mish");
     }
 
     /**

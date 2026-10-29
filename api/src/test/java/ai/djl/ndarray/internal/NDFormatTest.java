@@ -17,12 +17,13 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
 public class NDFormatTest {
 
-    private static final String LF = System.getProperty("line.separator");
+    private static final String LF = System.lineSeparator();
 
     @Test
     public void testUint8Format() {
@@ -32,7 +33,7 @@ public class NDFormatTest {
             array.set(data);
 
             String str = NDFormat.format(array, 100, 10, 10, 20);
-            Assert.assertEquals(str, "ND: (3) cpu() uint8" + LF + "[0x7F, 0x80, 0x01]" + LF);
+            Assert.assertEquals(str, "ND: (3) cpu() uint8" + LF + "[127, 128,   1]" + LF);
         }
     }
 
@@ -133,6 +134,22 @@ public class NDFormatTest {
             array = manager.create(data);
             str = NDFormat.format(array, 100, 10, 10, 20);
             Assert.assertEquals(str, "ND: (3) cpu() float64" + LF + "[  1.,   2., 100.]" + LF);
+        }
+    }
+
+    @Test
+    public void testLargeArray() {
+        try (NDManager manager = NDManager.newBaseManager(Device.cpu())) {
+            NDArray large = manager.arange(0f, 100000000f).reshape(100, 100, 100, 100);
+            String str = large.toString();
+            Assert.assertTrue(
+                    str.startsWith(
+                            "ND: (100, 100, 100, 100) cpu() float32"
+                                    + LF
+                                    + "Exceed max print size:"));
+
+            NDArray arr = manager.create(new float[] {1, 0, 0, 0});
+            Assert.assertEquals(arr.mean().toString(), "ND: () cpu() float32" + LF + "0.25" + LF);
         }
     }
 }

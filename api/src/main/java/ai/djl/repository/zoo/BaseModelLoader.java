@@ -17,70 +17,77 @@ import ai.djl.Device;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.engine.Engine;
-import ai.djl.modality.Input;
-import ai.djl.modality.Output;
-import ai.djl.ndarray.NDList;
+import ai.djl.nn.Block;
+import ai.djl.nn.BlockFactory;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
-import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
-import ai.djl.translate.NoopTranslator;
-import ai.djl.translate.ServingTranslatorFactory;
+import ai.djl.translate.DefaultTranslatorFactory;
 import ai.djl.translate.TranslateException;
 import ai.djl.translate.Translator;
 import ai.djl.translate.TranslatorFactory;
+import ai.djl.util.ClassLoaderUtils;
 import ai.djl.util.Pair;
 import ai.djl.util.Progress;
+import ai.djl.util.Utils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
+import java.io.Reader;
 import java.lang.reflect.Type;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
+import java.util.Properties;
 
 /** Shared code for the {@link ModelLoader} implementations. */
 public class BaseModelLoader implements ModelLoader {
 
-    protected Map<Pair<Type, Type>, TranslatorFactory<?, ?>> factories;
-    protected ModelZoo modelZoo;
-    protected Resource resource;
+    private static final Logger logger = LoggerFactory.getLogger(BaseModelLoader.class);
+
+    protected MRL mrl;
+    protected TranslatorFactory defaultFactory;
 
     /**
      * Constructs a {@link ModelLoader} given the repository, mrl, and version.
      *
-     * @param repository the repository to load the model from
      * @param mrl the mrl of the model to load
-     * @param version the version of the model to load
-     * @param modelZoo the modelZoo type that is being used to get supported engine types
      */
-    protected BaseModelLoader(Repository repository, MRL mrl, String version, ModelZoo modelZoo) {
-        this.resource = new Resource(repository, mrl, version);
-        this.modelZoo = modelZoo;
-        factories = new ConcurrentHashMap<>();
-        factories.put(
-                new Pair<>(NDList.class, NDList.class),
-                (TranslatorFactory<NDList, NDList>) (m, c) -> new NoopTranslator());
-        factories.put(new Pair<>(Input.class, Output.class), new ServingTranslatorFactory());
+    public BaseModelLoader(MRL mrl) {
+        this.mrl = mrl;
+        defaultFactory = new DefaultTranslatorFactory();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public String getGroupId() {
+        return mrl.getGroupId();
     }
 
     /** {@inheritDoc} */
     @Override
     public String getArtifactId() {
-        return resource.getMrl().getArtifactId();
+        return mrl.getArtifactId();
     }
 
     /** {@inheritDoc} */
     @Override
     public Application getApplication() {
-        return resource.getMrl().getApplication();
+        return mrl.getApplication();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public MRL getMrl() {
+        return mrl;
     }
 
     /** {@inheritDoc} */
     @Override
     public <I, O> ZooModel<I, O> loadModel(Criteria<I, O> criteria)
             throws IOException, ModelNotFoundException, MalformedModelException {
-        Artifact artifact = resource.match(criteria.getFilters());
+        Artifact artifact = mrl.match(criteria.getFilters());
         if (artifact == null) {
             throw new ModelNotFoundException("No matching filter found");
         }
@@ -90,41 +97,67 @@ public class BaseModelLoader implements ModelLoader {
         Map<String, String> options = artifact.getOptions(criteria.getOptions());
 
         try {
-            TranslatorFactory<I, O> factory = criteria.getTranslatorFactory();
-            if (factory == null) {
-                factory = getTranslatorFactory(criteria);
-                if (factory == null) {
-                    throw new ModelNotFoundException(
-                            getFactoryLookupErrorMessage("No matching default translator found"));
+            TranslatorFactory factory;
+            try {
+                factory = getTranslatorFactory(criteria, arguments);
+            } catch (FactoryLoadException e) {
+                // ModelNotFoundException rather than IllegalArgumentException so Criteria.loadModel
+                // keeps trying the remaining candidate loaders.
+                throw new ModelNotFoundException(e.getMessage(), e);
+            }
+            Class<I> input = criteria.getInputClass();
+            Class<O> output = criteria.getOutputClass();
+            if (factory == null || !factory.isSupported(input, output)) {
+                factory = defaultFactory;
+                if (!factory.isSupported(input, output)) {
+                    throw new ModelNotFoundException(getFactoryLookupErrorMessage(factory));
                 }
             }
 
-            resource.prepare(artifact, progress);
+            mrl.prepare(artifact, progress);
             if (progress != null) {
                 progress.reset("Loading", 2);
                 progress.update(1);
             }
 
-            Path modelPath = resource.getRepository().getResourceDirectory(artifact);
+            Path modelPath = mrl.getRepository().getResourceDirectory(artifact);
+            Path modelDir = Files.isRegularFile(modelPath) ? modelPath.getParent() : modelPath;
+            if (modelDir == null) {
+                throw new AssertionError("Directory should not be null.");
+            }
+            modelDir = Utils.getNestedModelDir(modelDir);
+
+            loadServingProperties(modelDir, arguments, options);
+            Application application = criteria.getApplication();
+            if (application != Application.UNDEFINED) {
+                arguments.put("application", application.getPath());
+            }
+            String engine = criteria.getEngine();
+            if (engine == null) {
+                // get engine from serving.properties
+                engine = (String) arguments.get("engine");
+            }
 
             // Check if the engine is specified in Criteria, use it if it is.
             // Otherwise check the modelzoo supported engine and grab a random engine in the list.
             // Otherwise if none of them is specified or model zoo is null, go to default engine.
-            String engine = criteria.getEngine();
-            if (engine == null && modelZoo != null) {
-                String defaultEngine = Engine.getInstance().getEngineName();
-                for (String supportedEngine : modelZoo.getSupportedEngines()) {
-                    if (supportedEngine.equals(defaultEngine)) {
-                        engine = supportedEngine;
-                        break;
-                    } else if (Engine.hasEngine(supportedEngine)) {
-                        engine = supportedEngine;
+            if (engine == null) {
+                ModelZoo modelZoo = ModelZoo.getModelZoo(mrl.getGroupId());
+                if (modelZoo != null) {
+                    String defaultEngine = Engine.getDefaultEngineName();
+                    for (String supportedEngine : modelZoo.getSupportedEngines()) {
+                        if (supportedEngine.equals(defaultEngine)) {
+                            engine = supportedEngine;
+                            break;
+                        } else if (Engine.hasEngine(supportedEngine)) {
+                            engine = supportedEngine;
+                        }
                     }
-                }
-                if (engine == null) {
-                    throw new ModelNotFoundException(
-                            "No supported engine available for model zoo: "
-                                    + modelZoo.getGroupId());
+                    if (engine == null) {
+                        throw new ModelNotFoundException(
+                                "No supported engine available for model zoo: "
+                                        + modelZoo.getGroupId());
+                    }
                 }
             }
             if (engine != null && !Engine.hasEngine(engine)) {
@@ -133,19 +166,22 @@ public class BaseModelLoader implements ModelLoader {
 
             String modelName = criteria.getModelName();
             if (modelName == null) {
-                modelName = artifact.getName();
+                modelName = options.get("modelName");
+                if (modelName == null) {
+                    modelName = artifact.getName();
+                }
             }
 
-            Model model = createModel(modelName, criteria.getDevice(), artifact, arguments, engine);
-            if (criteria.getBlock() != null) {
-                model.setBlock(criteria.getBlock());
-            }
+            Model model =
+                    createModel(
+                            modelDir,
+                            modelName,
+                            criteria.getDevice(),
+                            criteria.getBlock(),
+                            arguments,
+                            engine);
             model.load(modelPath, null, options);
-            Application application = criteria.getApplication();
-            if (application != Application.UNDEFINED) {
-                arguments.put("application", application.getPath());
-            }
-            Translator<I, O> translator = factory.newInstance(model, arguments);
+            Translator<I, O> translator = factory.newInstance(input, output, model, arguments);
             return new ZooModel<>(model, translator);
         } catch (TranslateException e) {
             throw new ModelNotFoundException("No matching translator found", e);
@@ -158,67 +194,149 @@ public class BaseModelLoader implements ModelLoader {
 
     /** {@inheritDoc} */
     @Override
-    public List<Artifact> listModels() throws IOException {
-        List<Artifact> list = resource.listArtifacts();
-        String version = resource.getVersion();
-        return list.stream()
-                .filter(a -> version == null || version.equals(a.getVersion()))
-                .collect(Collectors.toList());
+    public <I, O> boolean isDownloaded(Criteria<I, O> criteria)
+            throws IOException, ModelNotFoundException {
+        Artifact artifact = mrl.match(criteria.getFilters());
+        if (artifact == null) {
+            throw new ModelNotFoundException("No matching filter found");
+        }
+        return mrl.isPrepared(artifact);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public <I, O> void downloadModel(Criteria<I, O> criteria, Progress progress)
+            throws IOException, ModelNotFoundException {
+        Artifact artifact = mrl.match(criteria.getFilters());
+        if (artifact == null) {
+            throw new ModelNotFoundException("No matching filter found");
+        }
+        mrl.prepare(artifact, progress);
     }
 
     protected Model createModel(
+            Path modelPath,
             String name,
             Device device,
-            Artifact artifact,
+            Block block,
             Map<String, Object> arguments,
             String engine)
             throws IOException {
-        return Model.newInstance(name, device, engine);
+        Model model = Model.newInstance(name, device, engine);
+        if (block == null) {
+            Object bf = arguments.get("blockFactory");
+            if (bf instanceof BlockFactory) {
+                block = ((BlockFactory) bf).newBlock(model, modelPath, arguments);
+            } else {
+                String className = (String) bf;
+                BlockFactory factory =
+                        ClassLoaderUtils.findImplementation(
+                                modelPath, BlockFactory.class, className);
+                if (factory != null) {
+                    block = factory.newBlock(model, modelPath, arguments);
+                } else if (className != null) {
+                    throw new IllegalArgumentException("Failed to load BlockFactory: " + className);
+                }
+            }
+        }
+        if (block != null) {
+            model.setBlock(block);
+        }
+        for (Map.Entry<String, Object> entry : arguments.entrySet()) {
+            model.setProperty(entry.getKey(), entry.getValue().toString());
+        }
+        return model;
     }
 
     /** {@inheritDoc} */
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder(200);
-        sb.append(resource.getMrl().getGroupId())
-                .append(':')
-                .append(resource.getMrl().getArtifactId())
-                .append(' ')
-                .append(getApplication())
-                .append(" [\n");
+        sb.append(mrl).append(" [\n");
         try {
-            for (Artifact artifact : listModels()) {
+            for (Artifact artifact : mrl.listArtifacts()) {
                 sb.append('\t').append(artifact).append('\n');
             }
         } catch (IOException e) {
             sb.append("\tFailed load metadata.");
         }
-        sb.append("]");
+        sb.append(']');
         return sb.toString();
     }
 
-    @SuppressWarnings("unchecked")
-    private <I, O> TranslatorFactory<I, O> getTranslatorFactory(Criteria<I, O> criteria) {
-        if (criteria.getInputClass() == null) {
-            throw new IllegalArgumentException(
-                    getFactoryLookupErrorMessage("The criteria must set an input class."));
+    protected TranslatorFactory getTranslatorFactory(
+            Criteria<?, ?> criteria, Map<String, Object> arguments) {
+        TranslatorFactory factory = criteria.getTranslatorFactory();
+        if (factory != null) {
+            return factory;
         }
-        if (criteria.getOutputClass() == null) {
-            throw new IllegalArgumentException(
-                    getFactoryLookupErrorMessage("The criteria must set an output class."));
+
+        String factoryClass = (String) arguments.get("translatorFactory");
+        if (factoryClass != null) {
+            ClassLoader cl = ClassLoaderUtils.getContextClassLoader();
+            factory = ClassLoaderUtils.initClass(cl, TranslatorFactory.class, factoryClass);
+            if (factory == null) {
+                // Not a fall-through to the default factory: a model that names a factory and is
+                // then served with different pre- and post-processing is not distinguishable from
+                // a correct load. Unchecked, so this protected signature is unchanged; loadModel
+                // converts it.
+                throw new FactoryLoadException("Failed to load translatorFactory: " + factoryClass);
+            }
         }
-        return (TranslatorFactory<I, O>)
-                factories.get(new Pair<>(criteria.getInputClass(), criteria.getOutputClass()));
+        return factory;
     }
 
-    private String getFactoryLookupErrorMessage(String msg) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(msg);
-        sb.append("The valid input and output classes are: \n");
-        for (Pair<Type, Type> io : factories.keySet()) {
-            sb.append(
-                    "\t(" + io.getKey().getTypeName() + ", " + io.getValue().getTypeName() + ")\n");
+    private String getFactoryLookupErrorMessage(TranslatorFactory factory) {
+        StringBuilder sb = new StringBuilder(200);
+        sb.append(
+                "No matching default translator found. The valid input and output classes are: \n");
+        for (Pair<Type, Type> io : factory.getSupportedTypes()) {
+            sb.append("\t(")
+                    .append(io.getKey().getTypeName())
+                    .append(", ")
+                    .append(io.getValue().getTypeName())
+                    .append(")\n");
         }
         return sb.toString();
+    }
+
+    private void loadServingProperties(
+            Path modelDir, Map<String, Object> arguments, Map<String, String> options)
+            throws IOException {
+        Path manifestFile = modelDir.resolve("serving.properties");
+        if (Files.isRegularFile(manifestFile)) {
+            Properties prop = new Properties();
+            try (Reader reader = Files.newBufferedReader(manifestFile)) {
+                prop.load(reader);
+            }
+            for (String key : prop.stringPropertyNames()) {
+                // This file ships inside the model, so every key in it is model-supplied, on both
+                // branches: djl_rpc_uri arrives as a plain argument, not as an option.
+                String name = key.startsWith("option.") ? key.substring(7) : key;
+                if (Artifact.isUntrustedKey(name)) {
+                    // Debug, like the metadata filter: a model carrying one is expected, and the
+                    // application may already have set the same key through Criteria.
+                    logger.debug(
+                            "Ignoring {} in serving.properties: only the application may set it.",
+                            key);
+                    continue;
+                }
+                if (key.startsWith("option.")) {
+                    options.putIfAbsent(name, prop.getProperty(key));
+                } else {
+                    arguments.putIfAbsent(key, prop.getProperty(key));
+                }
+            }
+        }
+    }
+
+    /** Thrown when a model names a translator factory that cannot be loaded. */
+    private static final class FactoryLoadException extends IllegalArgumentException {
+
+        private static final long serialVersionUID = 1L;
+
+        FactoryLoadException(String message) {
+            super(message);
+        }
     }
 }

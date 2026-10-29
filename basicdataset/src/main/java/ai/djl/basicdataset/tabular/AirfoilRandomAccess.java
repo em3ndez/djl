@@ -12,47 +12,39 @@
  */
 package ai.djl.basicdataset.tabular;
 
-import ai.djl.Application;
+import ai.djl.Application.Tabular;
 import ai.djl.basicdataset.BasicDatasets;
-import ai.djl.ndarray.NDList;
-import ai.djl.ndarray.NDManager;
-import ai.djl.ndarray.types.Shape;
+import ai.djl.basicdataset.tabular.utils.Feature;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.util.Progress;
+
+import org.apache.commons.csv.CSVFormat;
+
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.FloatBuffer;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVRecord;
 
 /**
- * Airfoil Self-Noise Data Set from https://archive.ics.uci.edu/ml/datasets/Airfoil+Self-Noise.
+ * Airfoil Self-Noise Data Set from <a
+ * href="https://archive.ics.uci.edu/ml/datasets/Airfoil+Self-Noise">https://archive.ics.uci.edu/ml/datasets/Airfoil+Self-Noise</a>.
  *
  * <p>1503 instances 6 attributes
  */
 public final class AirfoilRandomAccess extends CsvDataset {
 
     private static final String ARTIFACT_ID = "airfoil";
+    private static final String VERSION = "1.0";
 
     private static final String[] COLUMNS = {
         "freq", "aoa", "chordlen", "freestreamvel", "ssdt", "ssoundpres"
     };
 
-    private Resource resource;
+    private MRL mrl;
     private Usage usage;
     private boolean prepared;
-
-    private boolean normalize;
-    private Map<String, Float> mean;
-    private Map<String, Float> std;
 
     /**
      * Creates an instance of {@code RandomAccessDataset} with the arguments in {@link Builder}.
@@ -61,10 +53,8 @@ public final class AirfoilRandomAccess extends CsvDataset {
      */
     AirfoilRandomAccess(Builder builder) {
         super(builder);
-        MRL mrl = MRL.dataset(Application.Tabular.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.0");
         usage = builder.usage;
-        normalize = builder.normalize;
+        mrl = builder.getMrl();
     }
 
     /** {@inheritDoc} */
@@ -74,10 +64,10 @@ public final class AirfoilRandomAccess extends CsvDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact);
 
-        Path root = resource.getRepository().getResourceDirectory(artifact);
+        Path root = mrl.getRepository().getResourceDirectory(artifact);
         Path csvFile;
         switch (usage) {
             case TRAIN:
@@ -92,20 +82,6 @@ public final class AirfoilRandomAccess extends CsvDataset {
 
         csvUrl = csvFile.toUri().toURL();
         super.prepare(progress);
-
-        if (normalize) {
-            mean = new HashMap<>();
-            std = new HashMap<>();
-
-            for (Feature feature : features) {
-                calculateMean(feature.getName());
-                calculateStd(feature.getName());
-            }
-            for (Feature feature : labels) {
-                calculateMean(feature.getName());
-                calculateStd(feature.getName());
-            }
-        }
         prepared = true;
     }
 
@@ -113,47 +89,6 @@ public final class AirfoilRandomAccess extends CsvDataset {
     @Override
     public List<String> getColumnNames() {
         return Arrays.asList(COLUMNS).subList(0, 5);
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    protected NDList toNDList(NDManager manager, CSVRecord record, List<Feature> selected) {
-        int length = selected.size();
-        ByteBuffer bb = manager.allocateDirect(length * 4);
-        FloatBuffer buf = bb.asFloatBuffer();
-        int index = 0;
-        for (Feature feature : selected) {
-            String name = feature.getName();
-            float value = Float.parseFloat(record.get(name));
-            if (normalize) {
-                value = (value - mean.get(name)) / std.get(name);
-            }
-            buf.put(value);
-            ++index;
-        }
-        buf.rewind();
-        return new NDList(manager.create(buf, new Shape(length)));
-    }
-
-    private void calculateMean(String column) {
-        float sum = 0;
-        long size = size();
-        for (int i = 0; i < size; ++i) {
-            CSVRecord record = csvRecords.get(i);
-            sum += Float.parseFloat(record.get(column));
-        }
-        mean.put(column, sum / size);
-    }
-
-    private void calculateStd(String column) {
-        float average = mean.get(column);
-        float sum = 0;
-        long size = size();
-        for (int i = 0; i < size; ++i) {
-            CSVRecord record = csvRecords.get(i);
-            sum += (float) Math.pow(Float.parseFloat(record.get(column)) - average, 2);
-        }
-        std.put(column, (float) Math.sqrt(sum / size));
     }
 
     /**
@@ -180,7 +115,13 @@ public final class AirfoilRandomAccess extends CsvDataset {
             groupId = BasicDatasets.GROUP_ID;
             artifactId = ARTIFACT_ID;
             usage = Usage.TRAIN;
-            csvFormat = CSVFormat.TDF.withHeader(COLUMNS).withIgnoreHeaderCase().withTrim();
+            csvFormat =
+                    CSVFormat.TDF
+                            .builder()
+                            .setHeader(COLUMNS)
+                            .setIgnoreHeaderCase(true)
+                            .setTrim(true)
+                            .get();
         }
 
         /** {@inheritDoc} */
@@ -274,13 +215,17 @@ public final class AirfoilRandomAccess extends CsvDataset {
         public AirfoilRandomAccess build() {
             if (features.isEmpty()) {
                 for (int i = 0; i < 5; ++i) {
-                    addFeature(COLUMNS[i]);
+                    addNumericFeature(COLUMNS[i], normalize);
                 }
             }
             if (labels.isEmpty()) {
-                addNumericLabel("ssoundpres");
+                addNumericLabel("ssoundpres", normalize);
             }
             return new AirfoilRandomAccess(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(Tabular.ANY, groupId, artifactId, VERSION);
         }
     }
 }

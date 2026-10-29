@@ -16,6 +16,7 @@ package ai.djl.training.evaluator;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.util.Pair;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -29,30 +30,26 @@ public abstract class AbstractAccuracy extends Evaluator {
 
     protected Map<String, Long> correctInstances;
     protected int axis;
-    protected int index;
 
     /**
-     * Creates an accuracy evaluator that computes accuracy across axis 1 along given index.
+     * Creates an accuracy evaluator that computes accuracy across axis 1.
      *
      * @param name the name of the evaluator, default is "Accuracy"
-     * @param index the index of the NDArray in labels to compute accuracy for
      */
-    public AbstractAccuracy(String name, int index) {
-        this(name, index, 1);
+    public AbstractAccuracy(String name) {
+        this(name, 1);
     }
 
     /**
      * Creates an accuracy evaluator.
      *
      * @param name the name of the evaluator, default is "Accuracy"
-     * @param index the index of the NDArray in labels to compute accuracy for
      * @param axis the axis that represent classes in prediction, default 1
      */
-    public AbstractAccuracy(String name, int index, int axis) {
+    public AbstractAccuracy(String name, int axis) {
         super(name);
         correctInstances = new ConcurrentHashMap<>();
         this.axis = axis;
-        this.index = index;
     }
 
     /**
@@ -80,9 +77,22 @@ public abstract class AbstractAccuracy extends Evaluator {
     /** {@inheritDoc} */
     @Override
     public void updateAccumulator(String key, NDList labels, NDList predictions) {
+        updateAccumulators(new String[] {key}, labels, predictions);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void updateAccumulators(String[] keys, NDList labels, NDList predictions) {
         Pair<Long, NDArray> update = accuracyHelper(labels, predictions);
-        totalInstances.compute(key, (k, v) -> v + update.getKey());
-        correctInstances.compute(key, (k, v) -> v + update.getValue().sum().getLong());
+        NDArray value = update.getValue();
+        NDArray sum = value.sum();
+        long correct = sum.getLong();
+        for (String key : keys) {
+            totalInstances.compute(key, (k, v) -> v + update.getKey());
+            correctInstances.compute(key, (k, v) -> v + correct);
+        }
+        value.close();
+        sum.close();
     }
 
     /** {@inheritDoc} */

@@ -12,9 +12,9 @@
  */
 package ai.djl.modality.cv.transform;
 
-import ai.djl.modality.cv.util.NDImageUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.translate.Transform;
+import ai.djl.util.RandomUtils;
 
 /**
  * A {@link Transform} that randomly flip the input image top to bottom with a probability of 0.5.
@@ -24,6 +24,9 @@ public class RandomFlipTopBottom implements Transform {
     /** {@inheritDoc} */
     @Override
     public NDArray transform(NDArray array) {
-        return NDImageUtils.randomFlipTopBottom(array);
+        if (RandomUtils.nextFloat() > 0.5) {
+            array.flip(0);
+        }
+        return array;
     }
 }

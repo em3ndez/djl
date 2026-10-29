@@ -14,6 +14,19 @@ URL url = new URL("https://s3.amazonaws.com/images.pdpics.com/preview/3033-bicyc
 Image img = BufferedImageFactory.getInstance().fromUrl(url);
 ```
 
+## Using opencv extension for high performance image process
+
+The [DJL OpenCV extension](../extensions/opencv/README.md) provides better performance compare to
+java's built-in ImageIO. You only need to add it into your project and DJL will automatically
+pick it up:
+
+```xml
+<dependency>
+    <groupId>ai.djl.opencv</groupId>
+    <artifactId>opencv</artifactId>
+</dependency>
+```
+
 ## Image Manipulation
 [Image](https://javadoc.io/doc/ai.djl/api/latest/ai/djl/modality/cv/Image.html) 
 provides a suite of image manipulation functions to let you pre- and post-process your images all within DJL.
@@ -21,7 +34,7 @@ provides a suite of image manipulation functions to let you pre- and post-proces
 ```java
 int width = img.getWidth();
 int height = img.getHeight();
-Image leftHalfImg = img.getSubimage(0, 0, width / 2, height); // get left half of the image
+Image leftHalfImg = img.getSubImage(0, 0, width / 2, height); // get left half of the image
 NDManager manager = NDManager.newBaseManager();
 NDArray imageArray = leftHalfImg.toNDArray(manager); // convert to NDArray
 ```
@@ -50,7 +63,11 @@ to demonstrate below.
 
 ```java
 // Load Object Detection Model
-ZooModel<Image, DetectedObjects> model = MxModelZoo.SSD.loadModel();
+Criteria<Image, DetectedObjects> criteria = Criteria.builder()
+        .setTypes(Image.class, DetectedObjects.class)
+        .optArtifactId("ssd")
+        .build();
+ZooModel<Image, DetectedObjects> model = criteria.loadModel();
 Predictor<Image, DetectedObjects> predictor = model.newPredictor();
 
 // Detect Objects
@@ -70,7 +87,10 @@ Here, we'll use the `SimplePose` model from the model zoo!
 
 ```java
 // Load Pose Detection Model
-ZooModel<Image, Joints> model = MxModelZoo.SIMPLE_POSE.loadModel();
+Criteria<Image, Joints> criteria = Criteria.builder()
+        .setTypes(Image.class, Joints.class)
+        .optArtifactId("simple_pose")
+        .build();
 Predictor<Image, Joints> predictor = model.newPredictor();
 
 // Detect Joints
@@ -85,6 +105,6 @@ img.save(out2, "png");
 ```
 
 ## Useful Information
-If you want to learn more about loading models, click [here](http://docs.djl.ai/docs/load_model.html).
+If you want to learn more about loading models, click [here](https://docs.djl.ai/master/docs/load_model.html).
 
-If you want to learn more about the model zoo, click [here](http://docs.djl.ai/docs/model-zoo.html).
+If you want to learn more about the model zoo, click [here](https://docs.djl.ai/master/docs/model-zoo.html).

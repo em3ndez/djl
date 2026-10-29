@@ -2,11 +2,13 @@
 
 This module contains the NLP support with SentencePiece implementation.
 
-This is an implementation from [SentencePiece's](https://github.com/google/sentencepiece) C++ API.
+This is an implementation from [SentencePiece](https://github.com/google/sentencepiece)'s C++ API.
 
 ## Documentation
 
-You can build the latest javadocs locally using the following command:
+The latest javadocs can be found on [here](https://javadoc.io/doc/ai.djl.sentencepiece/sentencepiece/latest/index.html).
+
+You can also build the latest javadocs locally using the following command:
 
 ```sh
 ./gradlew javadoc
@@ -21,6 +23,6 @@ You can pull the module from the central Maven repository by including the follo
 <dependency>
     <groupId>ai.djl.sentencepiece</groupId>
     <artifactId>sentencepiece</artifactId>
-    <version>0.10.0</version>
+    <version>0.39.0</version>
 </dependency>
 ```

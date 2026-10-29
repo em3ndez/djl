@@ -1,4 +1,5 @@
 .gradle
+.kotlin
 .DS_Store
 .idea
 .clang
@@ -14,6 +15,16 @@ libs
 *.dylib
 *.dll
 *.class
+*.log
+*.onnx
+*.pt
+*.safetensors
+*.pb
+*.trt
+*.uff
+*.gguf
+*.xgb
+*.bin
 
 # Eclipse
 .settings

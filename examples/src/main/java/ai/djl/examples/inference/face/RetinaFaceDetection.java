@@ -13,22 +13,22 @@
 package ai.djl.examples.inference.face;
 
 import ai.djl.ModelException;
-import ai.djl.engine.Engine;
 import ai.djl.inference.Predictor;
 import ai.djl.modality.cv.Image;
 import ai.djl.modality.cv.ImageFactory;
 import ai.djl.modality.cv.output.DetectedObjects;
 import ai.djl.repository.zoo.Criteria;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.TranslateException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * An example of inference using a face detection model.
@@ -44,11 +44,6 @@ public final class RetinaFaceDetection {
     private RetinaFaceDetection() {}
 
     public static void main(String[] args) throws IOException, ModelException, TranslateException {
-        if (!"PyTorch".equals(Engine.getInstance().getEngineName())) {
-            logger.info("This example only works for PyTorch.");
-            return;
-        }
-
         DetectedObjects detection = RetinaFaceDetection.predict();
         logger.info("{}", detection);
     }
@@ -77,12 +72,11 @@ public final class RetinaFaceDetection {
                         .optEngine("PyTorch") // Use PyTorch engine
                         .build();
 
-        try (ZooModel<Image, DetectedObjects> model = ModelZoo.loadModel(criteria)) {
-            try (Predictor<Image, DetectedObjects> predictor = model.newPredictor()) {
-                DetectedObjects detection = predictor.predict(img);
-                saveBoundingBoxImage(img, detection);
-                return detection;
-            }
+        try (ZooModel<Image, DetectedObjects> model = criteria.loadModel();
+                Predictor<Image, DetectedObjects> predictor = model.newPredictor()) {
+            DetectedObjects detection = predictor.predict(img);
+            saveBoundingBoxImage(img, detection);
+            return detection;
         }
     }
 
@@ -91,12 +85,10 @@ public final class RetinaFaceDetection {
         Path outputDir = Paths.get("build/output");
         Files.createDirectories(outputDir);
 
-        // Make image copy with alpha channel because original image was jpg
-        Image newImage = img.duplicate(Image.Type.TYPE_INT_ARGB);
-        newImage.drawBoundingBoxes(detection);
+        img.drawBoundingBoxes(detection);
 
         Path imagePath = outputDir.resolve("retinaface_detected.png");
-        newImage.save(Files.newOutputStream(imagePath), "png");
+        img.save(Files.newOutputStream(imagePath), "png");
         logger.info("Face detection result image has been saved in: {}", imagePath);
     }
 }

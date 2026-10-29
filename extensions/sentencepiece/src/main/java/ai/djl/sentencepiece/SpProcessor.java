@@ -14,10 +14,12 @@ package ai.djl.sentencepiece;
 
 import ai.djl.sentencepiece.jni.LibUtils;
 import ai.djl.sentencepiece.jni.SentencePieceLibrary;
+import ai.djl.util.Ec2Utils;
 import ai.djl.util.NativeResource;
+import ai.djl.util.Platform;
 
 /** The processor holder for SentencePiece. */
-final class SpProcessor extends NativeResource<Long> {
+public final class SpProcessor extends NativeResource<Long> {
 
     private static RuntimeException libraryStatus;
 
@@ -37,34 +39,85 @@ final class SpProcessor extends NativeResource<Long> {
         if (libraryStatus != null) {
             throw libraryStatus;
         }
+        Ec2Utils.callHome("SentencePiece");
         return new SpProcessor();
+    }
+
+    /**
+     * Returns the version of the sentencepiece.
+     *
+     * @return the version number of the sentencepiece
+     */
+    public String getVersion() {
+        Platform platform = Platform.detectPlatform("sentencepiece");
+        return platform.getVersion();
     }
 
     void loadModel(String path) {
         SentencePieceLibrary.LIB.loadModel(getHandle(), path);
     }
 
-    String[] tokenize(String input) {
+    void loadModelFromBytes(byte[] serializedProto) {
+        SentencePieceLibrary.LIB.loadModelFromBytes(getHandle(), serializedProto);
+    }
+
+    /**
+     * Tokenize a sentence into array of tokens.
+     *
+     * @param input sentence
+     * @return tokens
+     */
+    public String[] tokenize(String input) {
         return SentencePieceLibrary.LIB.tokenize(getHandle(), input);
     }
 
-    String buildSentence(String[] tokens) {
+    /**
+     * Build sentence from tokens.
+     *
+     * @param tokens input
+     * @return recovered sentence
+     */
+    public String buildSentence(String[] tokens) {
         return SentencePieceLibrary.LIB.detokenize(getHandle(), tokens);
     }
 
-    String getToken(int id) {
+    /**
+     * Get tokens from ID.
+     *
+     * @param id the index of token
+     * @return recovered token
+     */
+    public String getToken(int id) {
         return SentencePieceLibrary.LIB.idToPiece(getHandle(), id);
     }
 
-    int getId(String token) {
+    /**
+     * Get ID from token.
+     *
+     * @param token token that ready to map
+     * @return id from token
+     */
+    public int getId(String token) {
         return SentencePieceLibrary.LIB.pieceToId(getHandle(), token);
     }
 
-    int[] encode(String sentence) {
+    /**
+     * Encode sentence into indices.
+     *
+     * @param sentence input sentence
+     * @return indices
+     */
+    public int[] encode(String sentence) {
         return SentencePieceLibrary.LIB.encode(getHandle(), sentence);
     }
 
-    String decode(int[] ids) {
+    /**
+     * Decode indices into sentence.
+     *
+     * @param ids the indices
+     * @return recovered sentence
+     */
+    public String decode(int[] ids) {
         return SentencePieceLibrary.LIB.decode(getHandle(), ids);
     }
 

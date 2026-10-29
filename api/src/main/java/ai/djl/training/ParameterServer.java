@@ -14,6 +14,7 @@
 package ai.djl.training;
 
 import ai.djl.ndarray.NDArray;
+
 import java.util.Arrays;
 
 /** An interface for a key-value store to store parameters, and their corresponding gradients. */
@@ -38,6 +39,7 @@ public interface ParameterServer extends AutoCloseable {
         update(parameterId, grads, params);
         Arrays.stream(grads).forEach(NDArray::close);
     }
+
     /**
      * Updates the parameter of a key from Parameter Server.
      *

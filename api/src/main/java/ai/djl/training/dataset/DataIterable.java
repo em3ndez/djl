@@ -17,6 +17,10 @@ import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.translate.Batchifier;
 import ai.djl.translate.Pipeline;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -28,8 +32,6 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * DataIterable is a data loader that combines {@link Dataset}, {@link Batchifier}, {@link
@@ -42,14 +44,14 @@ public class DataIterable implements Iterable<Batch>, Iterator<Batch> {
 
     private static final Logger logger = LoggerFactory.getLogger(DataIterable.class);
 
-    private RandomAccessDataset dataset;
-    private NDManager manager;
-    private Batchifier dataBatchifier;
-    private Batchifier labelBatchifier;
-    private Pipeline pipeline;
-    private Pipeline targetPipeline;
+    protected RandomAccessDataset dataset;
+    protected NDManager manager;
+    protected Batchifier dataBatchifier;
+    protected Batchifier labelBatchifier;
+    protected Pipeline pipeline;
+    protected Pipeline targetPipeline;
     private ExecutorService executor;
-    private Device device;
+    protected Device device;
 
     private Iterator<List<Long>> sample;
     // for multithreading
@@ -158,7 +160,7 @@ public class DataIterable implements Iterable<Batch>, Iterator<Batch> {
         }
     }
 
-    private Batch fetch(List<Long> indices, int progress) throws IOException {
+    protected Batch fetch(List<Long> indices, int progress) throws IOException {
         NDManager subManager = manager.newSubManager();
         subManager.setName("dataIter fetch");
         int batchSize = indices.size();
@@ -197,7 +199,8 @@ public class DataIterable implements Iterable<Batch>, Iterator<Batch> {
                 dataBatchifier,
                 labelBatchifier,
                 progress,
-                dataset.size());
+                dataset.size(),
+                indices);
     }
 
     private void preFetch() {

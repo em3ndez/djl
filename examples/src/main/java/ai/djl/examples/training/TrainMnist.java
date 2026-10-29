@@ -12,12 +12,12 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.basicdataset.cv.classification.Mnist;
 import ai.djl.basicmodelzoo.basic.Mlp;
 import ai.djl.examples.training.util.Arguments;
 import ai.djl.metric.Metrics;
+import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.training.DefaultTrainingConfig;
@@ -32,6 +32,7 @@ import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.TranslateException;
+
 import java.io.IOException;
 
 /**
@@ -62,7 +63,7 @@ public final class TrainMnist {
                         Mnist.NUM_CLASSES,
                         new int[] {128, 64});
 
-        try (Model model = Model.newInstance("mlp")) {
+        try (Model model = Model.newInstance("mlp", arguments.getEngine())) {
             model.setBlock(block);
 
             // get training and validation dataset
@@ -104,7 +105,7 @@ public final class TrainMnist {
                 });
         return new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
                 .addEvaluator(new Accuracy())
-                .optDevices(Device.getDevices(arguments.getMaxGpus()))
+                .optDevices(arguments.getMaxGpus())
                 .addTrainingListeners(TrainingListener.Defaults.logging(outputDir))
                 .addTrainingListeners(listener);
     }
@@ -114,6 +115,7 @@ public final class TrainMnist {
         Mnist mnist =
                 Mnist.builder()
                         .optUsage(usage)
+                        .optManager(NDManager.newBaseManager(arguments.getEngine()))
                         .setSampling(arguments.getBatchSize(), true)
                         .optLimit(arguments.getLimit())
                         .build();

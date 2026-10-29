@@ -13,6 +13,7 @@
 package ai.djl.integration.tests.nn;
 
 import ai.djl.Model;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -25,17 +26,19 @@ import ai.djl.training.Trainer;
 import ai.djl.training.TrainingConfig;
 import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
 public class PoolingOperationsTest {
+
     TrainingConfig config =
             new DefaultTrainingConfig(Loss.l2Loss())
                     .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
 
     @Test
     public void testMaxPool1d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.maxPool1dBlock(new Shape(2)));
             // Look for a max pool value 5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -54,7 +57,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testMaxPool2d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.maxPool2dBlock(new Shape(2, 2)));
             // Look for a max pool value 5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -73,7 +76,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testMaxPool3d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.maxPool3dBlock(new Shape(2, 2, 2)));
             // Look for a max pool value 5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -92,7 +95,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalMaxPool1d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalMaxPool1dBlock());
             // Look for a max pool value 5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -111,7 +114,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalMaxPool2d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalMaxPool2dBlock());
             // Look for a max pool value 5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -130,7 +133,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalMaxPool3d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalMaxPool3dBlock());
             // Look for a max pool value 5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -149,7 +152,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testAvgPool1d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.avgPool1dBlock(new Shape(2)));
             // Look for a average pool value 1.5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -168,7 +171,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testAvgPool2d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.avgPool2dBlock(new Shape(2, 2)));
             // Look for a average pool value 1.25
             try (Trainer trainer = model.newTrainer(config)) {
@@ -187,7 +190,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testAvgPool3d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.avgPool3dBlock(new Shape(2, 2, 2)));
             // Look for a average pool value 1.125
             try (Trainer trainer = model.newTrainer(config)) {
@@ -206,7 +209,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalAvgPool1d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalAvgPool1dBlock());
             // Look for a average pool value 1.5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -225,7 +228,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalAvgPool2d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalAvgPool2dBlock());
             // Look for a average pool value 1.5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -244,7 +247,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalAvgPool3d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalAvgPool3dBlock());
             // Look for a average pool value 1.5
             try (Trainer trainer = model.newTrainer(config)) {
@@ -263,7 +266,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testLpPool1d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.lpPool1dBlock(1, new Shape(2)));
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(2, 2, 2));
@@ -282,7 +285,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testLpPool2d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.lpPool2dBlock(1, new Shape(2, 2)));
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(2, 2, 2, 2));
@@ -302,7 +305,7 @@ public class PoolingOperationsTest {
     // lpPool3d is not supported in PyTorch engine
     @Test(expectedExceptions = IllegalArgumentException.class)
     public void testLpPool3d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.lpPool3dBlock(1, new Shape(2, 2, 2)));
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(2, 2, 2, 2, 2));
@@ -321,7 +324,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalLpPool1d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalLpPool1dBlock(1));
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(2, 2, 2));
@@ -340,7 +343,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalLpPool2d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalLpPool2dBlock(1));
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(2, 2, 2, 2));
@@ -359,7 +362,7 @@ public class PoolingOperationsTest {
 
     @Test
     public void testGlobalLpPool3d() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Pool.globalLpPool3dBlock(1));
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(new Shape(2, 2, 2, 2, 2));

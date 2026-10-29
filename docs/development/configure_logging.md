@@ -23,18 +23,18 @@ to your project to enable logging (slf4j-simple is not recommended for productio
 
 For Maven:
 
-```
+```xml
 <dependency>
     <groupId>org.slf4j</groupId>
     <artifactId>slf4j-simple</artifactId>
-    <version>1.7.30</version>
+    <version>1.7.36</version>
 </dependency>
 ```
 
 For Gradle:
 
 ```
-    implementation "org.slf4j:slf4j-simple:1.7.30"
+    implementation "org.slf4j:slf4j-simple:1.7.36"
 ```
 
 Then you can use system properties to configure slf4j-simple log level:
@@ -43,7 +43,7 @@ Then you can use system properties to configure slf4j-simple log level:
 -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
 ```
 
-See [SimpleLogger](http://www.slf4j.org/api/org/slf4j/impl/SimpleLogger.html) for more detail.
+See [SimpleLogger](https://www.slf4j.org/api/org/slf4j/simple/SimpleLogger.html) for more detail.
 
 ### Use log4j2
 
@@ -55,16 +55,16 @@ While using log4j2 binding, you also need add a [log4j2.xml](https://github.com/
 If you want to use other logging framework such as `logback`, you can just add the following dependency into your build.gradle:
 
 ```
-    implementation "ch.qos.logback:logback-classic:1.2.3"
+    implementation "ch.qos.logback:logback-classic:1.4.5"
 ```
 
 or for Maven:
 
-```
+```xml
 <dependency>
     <groupId>ch.qos.logback</groupId>
     <artifactId>logback-classic</artifactId>
-    <version>1.2.3</version>
+    <version>1.4.5</version>
     <scope>test</scope>
 </dependency>
 ```

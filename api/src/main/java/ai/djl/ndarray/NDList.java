@@ -13,16 +13,35 @@
 package ai.djl.ndarray;
 
 import ai.djl.Device;
+import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
+import ai.djl.util.JsonUtils;
+import ai.djl.util.Pair;
+
+import com.google.gson.JsonObject;
+import com.google.gson.annotations.SerializedName;
+
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.PushbackInputStream;
+import java.nio.BufferUnderflowException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 /**
  * An {@code NDList} represents a sequence of {@link NDArray}s with names.
@@ -32,7 +51,7 @@ import java.util.Collection;
  *
  * @see NDArray
  */
-public class NDList extends ArrayList<NDArray> implements NDResource {
+public class NDList extends ArrayList<NDArray> implements NDResource, BytesSupplier {
 
     private static final long serialVersionUID = 1L;
 
@@ -75,7 +94,36 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
      * @return {@code NDList}
      */
     public static NDList decode(NDManager manager, byte[] byteArray) {
-        return decode(manager, new ByteArrayInputStream(byteArray));
+        if (byteArray.length < 9) {
+            throw new IllegalArgumentException("Invalid input length: " + byteArray.length);
+        }
+        try {
+            if (byteArray[0] == 'P' && byteArray[1] == 'K') {
+                return decodeNumpy(manager, new ByteArrayInputStream(byteArray));
+            } else if (byteArray[0] == (byte) 0x93
+                    && byteArray[1] == 'N'
+                    && byteArray[2] == 'U'
+                    && byteArray[3] == 'M') {
+                return new NDList(
+                        NDSerializer.decodeNumpy(manager, new ByteArrayInputStream(byteArray)));
+            } else if (byteArray[8] == '{') {
+                return decodeSafetensors(manager, new ByteArrayInputStream(byteArray));
+            }
+
+            ByteBuffer bb = ByteBuffer.wrap(byteArray);
+
+            int size = bb.getInt();
+            if (size < 0) {
+                throw new IllegalArgumentException("Invalid NDList size: " + size);
+            }
+            NDList list = new NDList();
+            for (int i = 0; i < size; i++) {
+                list.add(i, NDSerializer.decode(manager, bb));
+            }
+            return list;
+        } catch (IOException | BufferUnderflowException e) {
+            throw new IllegalArgumentException("Invalid NDArray input", e);
+        }
     }
 
     /**
@@ -86,7 +134,26 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
      * @return {@code NDList}
      */
     public static NDList decode(NDManager manager, InputStream is) {
-        try (DataInputStream dis = new DataInputStream(is)) {
+        try {
+            DataInputStream dis = new DataInputStream(is);
+            byte[] magic = new byte[9];
+            dis.readFully(magic);
+
+            PushbackInputStream pis = new PushbackInputStream(is, 9);
+            pis.unread(magic);
+            if (magic[0] == 'P' && magic[1] == 'K') {
+                // assume this is npz file
+                return decodeNumpy(manager, pis);
+            } else if (magic[0] == (byte) 0x93
+                    && magic[1] == 'N'
+                    && magic[2] == 'U'
+                    && magic[3] == 'M') {
+                return new NDList(NDSerializer.decodeNumpy(manager, pis));
+            } else if (magic[8] == '{') {
+                return decodeSafetensors(manager, pis);
+            }
+
+            dis = new DataInputStream(pis);
             int size = dis.readInt();
             if (size < 0) {
                 throw new IllegalArgumentException("Invalid NDList size: " + size);
@@ -99,6 +166,88 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
         } catch (IOException e) {
             throw new IllegalArgumentException("Malformed data", e);
         }
+    }
+
+    private static NDList decodeSafetensors(NDManager manager, InputStream is) throws IOException {
+        DataInputStream dis;
+        if (is instanceof DataInputStream) {
+            dis = (DataInputStream) is;
+        } else {
+            dis = new DataInputStream(is);
+        }
+
+        byte[] buf = new byte[8];
+        dis.readFully(buf);
+        int len = Math.toIntExact(ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN).getLong());
+        buf = new byte[len];
+        dis.readFully(buf);
+        String json = new String(buf, StandardCharsets.UTF_8);
+        // rust implementation sort by name, our implementation preserve the order.
+        JsonObject jsonObject = JsonUtils.GSON.fromJson(json, JsonObject.class);
+        List<Pair<String, SafeTensor>> list = new ArrayList<>();
+        int max = 0;
+        for (String key : jsonObject.keySet()) {
+            if ("__metadata__".equals(key)) {
+                continue;
+            }
+            SafeTensor value = JsonUtils.GSON.fromJson(jsonObject.get(key), SafeTensor.class);
+            if (value.offsets.length != 2) {
+                throw new IOException("Malformed safetensors metadata: " + json);
+            }
+            max = Math.max(max, value.offsets[1]);
+            list.add(new Pair<>(key, value));
+        }
+        buf = new byte[max];
+        dis.readFully(buf);
+        NDList ret = new NDList(list.size());
+        for (Pair<String, SafeTensor> pair : list) {
+            if ("__metadata__".equals(pair.getKey())) {
+                continue;
+            }
+            SafeTensor st = pair.getValue();
+            Shape shape = new Shape(st.shape);
+            DataType dataType = DataType.fromSafetensors(st.dtype);
+            if (st.offsets[0] < 0
+                    || st.size() != BaseNDManager.toBufferSize(shape.size(), dataType)) {
+                throw new IOException("Malformed safetensors metadata: " + json);
+            }
+            ByteBuffer bb = ByteBuffer.wrap(buf, st.offsets[0], st.size());
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+            NDArray array = manager.create(bb, shape, dataType);
+            array.setName(pair.getKey());
+            ret.add(array);
+        }
+        return ret;
+    }
+
+    private static NDList decodeNumpy(NDManager manager, InputStream is) throws IOException {
+        NDList list = new NDList();
+        ZipInputStream zis = new ZipInputStream(is);
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            String name = entry.getName();
+            NDArray array = NDSerializer.decodeNumpy(manager, zis);
+            if (!name.startsWith("arr_") && name.endsWith(".npy")) {
+                array.setName(name.substring(0, name.length() - 4));
+            }
+            list.add(array);
+        }
+        return list;
+    }
+
+    /**
+     * Returns the first occurrence of the specified element from this NDList if it is present.
+     *
+     * @param name the name of the NDArray
+     * @return the first occurrence
+     */
+    public NDArray get(String name) {
+        for (NDArray array : this) {
+            if (name.equals(array.getName())) {
+                return array;
+            }
+        }
+        return null;
     }
 
     /**
@@ -187,7 +336,19 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
      * @return a view of the portion of this NDList
      */
     public NDList subNDList(int fromIndex) {
-        return new NDList(subList(fromIndex, size()));
+        return subNDList(fromIndex, size());
+    }
+
+    /**
+     * Returns a view of the portion of this NDList between the specified fromIndex, inclusive, and
+     * toIndex, exclusive.
+     *
+     * @param fromIndex the start index (inclusive)
+     * @param toIndex the end index (exclusive)
+     * @return a view of the portion of this NDList
+     */
+    public NDList subNDList(int fromIndex, int toIndex) {
+        return new NDList(subList(fromIndex, toIndex));
     }
 
     /**
@@ -200,7 +361,7 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
     public NDList toDevice(Device device, boolean copy) {
         if (!copy) {
             // if all arrays in NDList are already on device, return itself
-            if (this.stream().allMatch(array -> array.getDevice() == device)) {
+            if (stream().allMatch(array -> array.getDevice() == device)) {
                 return this;
             }
         }
@@ -217,20 +378,26 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
 
     /** {@inheritDoc} */
     @Override
+    public List<NDArray> getResourceNDArrays() {
+        return this;
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public void attach(NDManager manager) {
-        stream().forEach(array -> array.attach(manager));
+        forEach(array -> array.attach(manager));
     }
 
     /** {@inheritDoc} */
     @Override
     public void tempAttach(NDManager manager) {
-        stream().forEach(array -> array.tempAttach(manager));
+        forEach(array -> array.tempAttach(manager));
     }
 
     /** {@inheritDoc} */
     @Override
     public void detach() {
-        stream().forEach(NDResource::detach);
+        forEach(NDResource::detach);
     }
 
     /**
@@ -239,17 +406,108 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
      * @return the byte array
      */
     public byte[] encode() {
+        return encode(Encoding.ND_LIST);
+    }
+
+    /**
+     * Encodes the NDList to byte array.
+     *
+     * @param encoding encode mode, one of ndlist/npz/safetensor format
+     * @return the byte array
+     */
+    public byte[] encode(Encoding encoding) {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-            DataOutputStream dos = new DataOutputStream(baos);
-            dos.writeInt(size());
-            for (NDArray nd : this) {
-                dos.write(nd.encode());
-            }
-            dos.flush();
+            encode(baos, encoding);
             return baos.toByteArray();
         } catch (IOException e) {
             throw new AssertionError("NDList is not writable", e);
         }
+    }
+
+    /**
+     * Writes the encoded NDList to {@code OutputStream}.
+     *
+     * @param os the {@code OutputStream} to be written to
+     * @throws IOException if failed on IO operation
+     */
+    public void encode(OutputStream os) throws IOException {
+        encode(os, Encoding.ND_LIST);
+    }
+
+    /**
+     * Writes the encoded NDList to {@code OutputStream}.
+     *
+     * @param os the {@code OutputStream} to be written to
+     * @param encoding encode mode, one of ndlist/npz/safetensor format
+     * @throws IOException if failed on IO operation
+     */
+    public void encode(OutputStream os, Encoding encoding) throws IOException {
+        if (encoding == Encoding.NPZ) {
+            ZipOutputStream zos = new ZipOutputStream(os);
+            int i = 0;
+            for (NDArray nd : this) {
+                String name = nd.getName();
+                if (name == null) {
+                    zos.putNextEntry(new ZipEntry("arr_" + i + ".npy"));
+                    ++i;
+                } else {
+                    zos.putNextEntry(new ZipEntry(name + ".npy"));
+                }
+                NDSerializer.encodeAsNumpy(nd, zos);
+            }
+            zos.finish();
+            zos.flush();
+            return;
+        } else if (encoding == Encoding.SAFETENSORS) {
+            Map<String, SafeTensor> map = new ConcurrentHashMap<>(size());
+            int i = 0;
+            int offset = 0;
+            for (NDArray nd : this) {
+                String name = nd.getName();
+                if (name == null) {
+                    name = "arr_" + i;
+                    ++i;
+                }
+                SafeTensor st = new SafeTensor();
+                st.dtype = nd.getDataType().asSafetensors();
+                st.shape = nd.getShape().getShape();
+                int size = BaseNDManager.toBufferSize(nd.size(), nd.getDataType());
+                int limit = Math.addExact(offset, size);
+                st.offsets = new int[] {offset, limit};
+                map.put(name, st);
+                offset = limit;
+            }
+            byte[] json = JsonUtils.GSON.toJson(map).getBytes(StandardCharsets.UTF_8);
+
+            ByteBuffer buf = ByteBuffer.allocate(8);
+            buf.order(ByteOrder.LITTLE_ENDIAN);
+            buf.putLong(0, json.length);
+            os.write(buf.array());
+            os.write(json);
+            for (NDArray nd : this) {
+                os.write(nd.toByteArray());
+            }
+            return;
+        }
+
+        DataOutputStream dos = new DataOutputStream(os);
+        dos.writeInt(size());
+        for (NDArray nd : this) {
+            NDSerializer.encode(nd, dos);
+        }
+        dos.flush();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public byte[] getAsBytes() {
+        return encode();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public ByteBuffer toByteBuffer() {
+        return ByteBuffer.wrap(encode());
     }
 
     /**
@@ -287,5 +545,24 @@ public class NDList extends ArrayList<NDArray> implements NDResource {
                     .append('\n');
         }
         return builder.toString();
+    }
+
+    /** An enum represents NDList serialization format. */
+    public enum Encoding {
+        ND_LIST,
+        NPZ,
+        SAFETENSORS
+    }
+
+    private static final class SafeTensor {
+        String dtype;
+        long[] shape;
+
+        @SerializedName("data_offsets")
+        int[] offsets;
+
+        int size() {
+            return offsets[1] - offsets[0];
+        }
     }
 }

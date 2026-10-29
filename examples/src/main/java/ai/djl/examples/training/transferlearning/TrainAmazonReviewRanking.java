@@ -13,16 +13,16 @@
 package ai.djl.examples.training.transferlearning;
 
 import ai.djl.Application;
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.ModelException;
 import ai.djl.basicdataset.tabular.CsvDataset;
-import ai.djl.basicdataset.utils.DynamicBuffer;
-import ai.djl.engine.Engine;
+import ai.djl.basicdataset.tabular.utils.DynamicBuffer;
+import ai.djl.basicdataset.tabular.utils.Feature;
+import ai.djl.basicdataset.tabular.utils.Featurizer.DataFeaturizer;
 import ai.djl.examples.training.util.Arguments;
-import ai.djl.inference.Predictor;
 import ai.djl.metric.Metrics;
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.DefaultVocabulary;
+import ai.djl.modality.nlp.Vocabulary;
 import ai.djl.modality.nlp.bert.BertFullTokenizer;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
@@ -35,7 +35,6 @@ import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.nn.norm.Dropout;
 import ai.djl.repository.zoo.Criteria;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
@@ -49,11 +48,13 @@ import ai.djl.training.loss.Loss;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.PaddingStackBatchifier;
 import ai.djl.translate.TranslateException;
+
+import org.apache.commons.csv.CSVFormat;
+
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Locale;
-import org.apache.commons.csv.CSVFormat;
 
 public final class TrainAmazonReviewRanking {
 
@@ -71,27 +72,25 @@ public final class TrainAmazonReviewRanking {
             return null;
         }
 
-        // MXNet base model
-        String modelUrls = "https://resources.djl.ai/test-models/distilbert.zip";
-        if ("PyTorch".equals(Engine.getInstance().getEngineName())) {
-            modelUrls =
-                    "https://resources.djl.ai/test-models/traced_distilbert_wikipedia_uncased.zip";
-        }
+        String engine = arguments.getEngine();
+        String modelUrls =
+                "https://resources.djl.ai/test-models/traced_distilbert_wikipedia_uncased.zip";
 
         Criteria<NDList, NDList> criteria =
                 Criteria.builder()
                         .optApplication(Application.NLP.WORD_EMBEDDING)
                         .setTypes(NDList.class, NDList.class)
                         .optModelUrls(modelUrls)
+                        .optEngine(engine)
                         .optProgress(new ProgressBar())
+                        .optOption("trainParam", "true")
                         .build();
         int maxTokenLength = 64;
-        try (Model model = Model.newInstance("AmazonReviewRatingClassification");
-                ZooModel<NDList, NDList> embedding = ModelZoo.loadModel(criteria)) {
+        try (Model model = Model.newInstance("AmazonReviewRatingClassification", engine);
+                ZooModel<NDList, NDList> embedding = criteria.loadModel()) {
             // Prepare the vocabulary
-            SimpleVocabulary vocabulary =
-                    SimpleVocabulary.builder()
-                            .optMinFrequency(1)
+            DefaultVocabulary vocabulary =
+                    DefaultVocabulary.builder()
                             .addFromTextFile(embedding.getArtifact("vocab.txt"))
                             .optUnknownToken("[UNK]")
                             .build();
@@ -103,7 +102,7 @@ public final class TrainAmazonReviewRanking {
             RandomAccessDataset trainingSet = datasets[0];
             RandomAccessDataset validationSet = datasets[1];
             // create training model
-            model.setBlock(getBlock(embedding.newPredictor()));
+            model.setBlock(getBlock(embedding.getBlock()));
             DefaultTrainingConfig config = setupTrainingConfig(arguments);
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.setMetrics(new Metrics());
@@ -121,17 +120,15 @@ public final class TrainAmazonReviewRanking {
     private static CsvDataset getDataset(
             Arguments arguments, BertFullTokenizer tokenizer, int maxLength) {
         String amazonReview =
-                "https://s3.amazonaws.com/amazon-reviews-pds/tsv/amazon_reviews_us_Digital_Software_v1_00.tsv.gz";
+                "https://mlrepo.djl.ai/dataset/nlp/ai/djl/basicdataset/amazon_reviews/1.0/amazon_reviews_us_Digital_Software_v1_00.tsv.gz";
         float paddingToken = tokenizer.getVocabulary().getIndex("[PAD]");
         return CsvDataset.builder()
                 .optCsvUrl(amazonReview)
-                .setCsvFormat(CSVFormat.TDF.withQuote(null).withHeader())
+                .setCsvFormat(CSVFormat.TDF.builder().setQuote(null).setHeader().get())
                 .setSampling(arguments.getBatchSize(), true)
-                .addFeature(
-                        new CsvDataset.Feature(
-                                "review_body", new BertFeaturizer(tokenizer, maxLength)))
+                .addFeature(new Feature("review_body", new BertFeaturizer(tokenizer, maxLength)))
                 .addLabel(
-                        new CsvDataset.Feature(
+                        new Feature(
                                 "star_rating",
                                 (buf, data) -> buf.put(Float.parseFloat(data) - 1.0f)))
                 .optDataBatchifier(
@@ -143,55 +140,33 @@ public final class TrainAmazonReviewRanking {
                 .build();
     }
 
-    private static Block addFreezeLayer(Predictor<NDList, NDList> embedder) {
-        if ("PyTorch".equals(Engine.getInstance().getEngineName())) {
-            return new LambdaBlock(
-                    ndList -> {
-                        NDArray data = ndList.singletonOrThrow();
-                        try {
-                            return embedder.predict(
-                                    new NDList(
-                                            data.toType(DataType.INT64, false),
-                                            data.getManager()
-                                                    .full(data.getShape(), 1, DataType.INT64),
-                                            data.getManager()
-                                                    .arange(data.getShape().get(1))
-                                                    .toType(DataType.INT64, false)
-                                                    .broadcast(data.getShape())));
-                        } catch (TranslateException e) {
-                            throw new IllegalArgumentException("embedding error", e);
-                        }
-                    });
-        } else {
-            // MXNet
-            return new LambdaBlock(
-                    ndList -> {
-                        NDArray data = ndList.singletonOrThrow();
-                        long batchSize = data.getShape().get(0);
-                        float maxLength = data.getShape().get(1);
-                        try {
-                            return embedder.predict(
-                                    new NDList(
-                                            data,
-                                            data.getManager()
-                                                    .full(new Shape(batchSize), maxLength)));
-                        } catch (TranslateException e) {
-                            throw new IllegalArgumentException("embedding error", e);
-                        }
-                    });
-        }
-    }
-
-    private static Block getBlock(Predictor<NDList, NDList> embedder) {
-        return new SequentialBlock()
-                // text embedding layer
-                .add(addFreezeLayer(embedder))
-                // Classification layers
+    private static Block getBlock(Block embedder) {
+        SequentialBlock classifier = new SequentialBlock();
+        // text embedding layer
+        LambdaBlock lambda =
+                new LambdaBlock(
+                        ndList -> {
+                            NDArray data = ndList.singletonOrThrow();
+                            NDList inputs = new NDList();
+                            inputs.add(data.toType(DataType.INT64, false));
+                            inputs.add(data.getManager().full(data.getShape(), 1, DataType.INT64));
+                            inputs.add(
+                                    data.getManager()
+                                            .arange(data.getShape().get(1)) // maxLen
+                                            .toType(DataType.INT64, false)
+                                            .broadcast(data.getShape()));
+                            return inputs;
+                        });
+        classifier.add(lambda);
+        classifier.add(embedder);
+        // Classification layers
+        classifier
                 .add(Linear.builder().setUnits(768).build()) // pre classifier
                 .add(Activation::relu)
                 .add(Dropout.builder().optRate(0.2f).build())
                 .add(Linear.builder().setUnits(5).build()) // 5 star rating
                 .addSingleton(nd -> nd.get(":,0")); // follow HF classifier
+        return classifier;
     }
 
     private static DefaultTrainingConfig setupTrainingConfig(Arguments arguments) {
@@ -207,12 +182,12 @@ public final class TrainAmazonReviewRanking {
                 });
         return new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
                 .addEvaluator(new Accuracy())
-                .optDevices(Device.getDevices(1))
+                .optDevices(arguments.getMaxGpus())
                 .addTrainingListeners(TrainingListener.Defaults.logging(outputDir))
                 .addTrainingListeners(listener);
     }
 
-    private static final class BertFeaturizer implements CsvDataset.Featurizer {
+    private static final class BertFeaturizer implements DataFeaturizer {
 
         private final BertFullTokenizer tokenizer;
         private final int maxLength;
@@ -225,7 +200,7 @@ public final class TrainAmazonReviewRanking {
         /** {@inheritDoc} */
         @Override
         public void featurize(DynamicBuffer buf, String input) {
-            SimpleVocabulary vocab = tokenizer.getVocabulary();
+            Vocabulary vocab = tokenizer.getVocabulary();
             List<String> tokens = tokenizer.tokenize(input.toLowerCase(Locale.ENGLISH));
             tokens = tokens.size() > maxLength ? tokens.subList(0, maxLength) : tokens;
             buf.put(vocab.getIndex("[CLS]"));

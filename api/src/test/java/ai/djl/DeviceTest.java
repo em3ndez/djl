@@ -13,6 +13,9 @@
 
 package ai.djl;
 
+import ai.djl.Device.MultiDevice;
+import ai.djl.engine.Engine;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -21,15 +24,43 @@ public class DeviceTest {
     @Test
     public void testDevice() {
         Assert.assertEquals(Device.cpu(), Device.of("cpu", -1));
-        if (Device.getGpuCount() > 0) {
-            Assert.assertEquals(Device.gpu(), Device.defaultDevice());
+        Engine engine = Engine.getInstance();
+        if (engine.getGpuCount() > 0) {
+            Assert.assertEquals(Device.gpu(), engine.defaultDevice());
         } else {
-            Assert.assertEquals(Device.cpu(), Device.defaultDevice());
+            Assert.assertEquals(Device.cpu(), engine.defaultDevice());
         }
         Assert.assertEquals(Device.gpu(), Device.of("gpu", 0));
         Assert.assertEquals(Device.gpu(3), Device.of("gpu", 3));
         Assert.assertNotEquals(Device.cpu(), Device.gpu());
         Device dev = Device.of("myDevice", 1);
         Assert.assertEquals(dev.getDeviceType(), "myDevice");
+
+        System.setProperty("test_key", "test");
+        Engine.debugEnvironment();
+
+        Assert.assertEquals(1, Device.cpu().getDevices().size());
+        Assert.assertEquals(2, new MultiDevice(Device.gpu(1), Device.gpu(2)).getDevices().size());
+    }
+
+    @Test
+    public void testDeviceName() {
+        Assert.assertEquals(Device.fromName("cpu"), Device.cpu());
+        Assert.assertEquals(Device.fromName("-1"), Device.cpu());
+
+        Assert.assertEquals(Device.fromName("gpu0"), Device.gpu());
+        Assert.assertEquals(Device.fromName("0"), Device.gpu());
+        Assert.assertEquals(Device.fromName("1"), Device.gpu(1));
+
+        Assert.assertEquals(Device.fromName("nc1"), Device.of("nc", 1));
+        Assert.assertEquals(Device.fromName("a999"), Device.of("a", 999));
+
+        Device defaultDevice = Engine.getInstance().defaultDevice();
+        Assert.assertEquals(Device.fromName(""), defaultDevice);
+        Assert.assertEquals(Device.fromName(null), defaultDevice);
+
+        Assert.assertEquals(
+                Device.fromName("gpu1+gpu2"), new MultiDevice(Device.gpu(2), Device.gpu(1)));
+        Assert.assertEquals(Device.fromName("gpu1+gpu2"), new MultiDevice("gpu", 1, 3));
     }
 }

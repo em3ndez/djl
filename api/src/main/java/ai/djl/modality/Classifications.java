@@ -14,17 +14,17 @@ package ai.djl.modality;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.types.DataType;
+import ai.djl.translate.Ensembleable;
 import ai.djl.util.JsonSerializable;
 import ai.djl.util.JsonUtils;
-import com.google.gson.Gson;
+
 import com.google.gson.JsonElement;
-import com.google.gson.JsonSerializationContext;
-import com.google.gson.JsonSerializer;
-import java.lang.reflect.Type;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,17 +32,17 @@ import java.util.stream.Collectors;
  * {@code Classifications} is the container that stores the classification results for
  * classification on a single input.
  */
-public class Classifications implements JsonSerializable {
+public class Classifications implements JsonSerializable, Ensembleable<Classifications> {
 
     private static final long serialVersionUID = 1L;
 
-    private static final Gson GSON =
-            JsonUtils.builder()
-                    .registerTypeAdapter(Classifications.class, new ClassificationsSerializer())
-                    .create();
-
+    @SuppressWarnings("serial")
     protected List<String> classNames;
+
+    @SuppressWarnings("serial")
     protected List<Double> probabilities;
+
+    protected int topK;
 
     /**
      * Constructs a {@code Classifications} using a parallel list of classNames and probabilities.
@@ -53,6 +53,7 @@ public class Classifications implements JsonSerializable {
     public Classifications(List<String> classNames, List<Double> probabilities) {
         this.classNames = classNames;
         this.probabilities = probabilities;
+        this.topK = 5;
     }
 
     /**
@@ -63,11 +64,59 @@ public class Classifications implements JsonSerializable {
      * @param probabilities the probabilities for each class for the input
      */
     public Classifications(List<String> classNames, NDArray probabilities) {
+        this(classNames, probabilities, 5);
+    }
+
+    /**
+     * Constructs a {@code Classifications} using list of classNames parallel to an NDArray of
+     * probabilities.
+     *
+     * @param classNames the names of the classes
+     * @param probabilities the probabilities for each class for the input
+     * @param topK the number of top classes to return
+     */
+    public Classifications(List<String> classNames, NDArray probabilities, int topK) {
         this.classNames = classNames;
-        NDArray array = probabilities.toType(DataType.FLOAT64, false);
-        this.probabilities =
-                Arrays.stream(array.toDoubleArray()).boxed().collect(Collectors.toList());
-        array.close();
+        if (probabilities.getDataType() == DataType.FLOAT32) {
+            // Avoid converting float32 to float64 as this is not supported on MPS device
+            this.probabilities = new ArrayList<>();
+            for (float prob : probabilities.toFloatArray()) {
+                this.probabilities.add((double) prob);
+            }
+        } else {
+            NDArray array = probabilities.toType(DataType.FLOAT64, false);
+            this.probabilities =
+                    Arrays.stream(array.toDoubleArray()).boxed().collect(Collectors.toList());
+            array.close();
+        }
+        this.topK = topK;
+    }
+
+    /**
+     * Returns the classes that were classified into.
+     *
+     * @return the classes that were classified into
+     */
+    public List<String> getClassNames() {
+        return classNames;
+    }
+
+    /**
+     * Returns the list of probabilities for each class (matching the order of the class names).
+     *
+     * @return the list of probabilities for each class (matching the order of the class names)
+     */
+    public List<Double> getProbabilities() {
+        return probabilities;
+    }
+
+    /**
+     * Set the topK number of classes to be displayed.
+     *
+     * @param topK the number of top classes to return
+     */
+    public final void setTopK(int topK) {
+        this.topK = topK;
     }
 
     /**
@@ -95,6 +144,16 @@ public class Classifications implements JsonSerializable {
     @SuppressWarnings("unchecked")
     public <T extends Classification> T item(int index) {
         return (T) new Classification(classNames.get(index), probabilities.get(index));
+    }
+
+    /**
+     * Returns a list of the top classes.
+     *
+     * @param <T> the type of the classification item for the task
+     * @return the list of classification items for the best classes in order of best to worst
+     */
+    public <T extends Classification> List<T> topK() {
+        return topK(topK);
     }
 
     /**
@@ -140,20 +199,50 @@ public class Classifications implements JsonSerializable {
 
     /** {@inheritDoc} */
     @Override
-    public String toJson() {
-        return GSON.toJson(this);
+    public JsonElement serialize() {
+        return JsonUtils.GSON.toJsonTree(topK());
     }
 
     /** {@inheritDoc} */
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append('[').append(System.lineSeparator());
-        for (Classification item : topK(5)) {
-            sb.append('\t').append(item).append(System.lineSeparator());
+        sb.append("[\n");
+        List<Classification> list = topK();
+        int index = 0;
+        for (Classification item : list) {
+            sb.append('\t').append(item);
+            if (++index < list.size()) {
+                sb.append(',');
+            }
+            sb.append('\n');
         }
-        sb.append(']');
+        sb.append("]\n");
         return sb.toString();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Classifications ensembleWith(Iterator<Classifications> it) {
+        int size = probabilities.size();
+        List<Double> newProbabilities = new ArrayList<>(size);
+        newProbabilities.addAll(probabilities);
+        int count = 1;
+        while (it.hasNext()) {
+            ++count;
+            Classifications c = it.next();
+            for (int i = 0; i < size; ++i) {
+                newProbabilities.set(i, newProbabilities.get(i) + c.probabilities.get(i));
+            }
+            if (!c.classNames.equals(classNames)) {
+                throw new IllegalArgumentException(
+                        "Found a classNames mismatch during ensembling. All input Classifications"
+                                + " should have the same classNames, but some were different");
+            }
+        }
+        final int total = count;
+        newProbabilities.replaceAll(p -> p / total);
+        return new Classifications(classNames, newProbabilities);
     }
 
     /**
@@ -199,22 +288,16 @@ public class Classifications implements JsonSerializable {
         /** {@inheritDoc} */
         @Override
         public String toString() {
+            StringBuilder sb = new StringBuilder(100);
+            sb.append("{\"className\": \"").append(className).append("\", \"probability\": ");
             if (probability < 0.00001) {
-                return String.format("class: \"%s\", probability: %.1e", className, probability);
+                sb.append(String.format("%.1e", probability));
+            } else {
+                probability = (int) (probability * 100000) / 100000f;
+                sb.append(String.format("%.5f", probability));
             }
-            probability = (int) (probability * 100000) / 100000f;
-            return String.format("class: \"%s\", probability: %.5f", className, probability);
-        }
-    }
-
-    /** A customized Gson serializer to serialize the {@code Classifications} object. */
-    public static final class ClassificationsSerializer implements JsonSerializer<Classifications> {
-
-        /** {@inheritDoc} */
-        @Override
-        public JsonElement serialize(Classifications src, Type type, JsonSerializationContext ctx) {
-            List<?> list = src.topK(5);
-            return ctx.serialize(list);
+            sb.append('}');
+            return sb.toString();
         }
     }
 }

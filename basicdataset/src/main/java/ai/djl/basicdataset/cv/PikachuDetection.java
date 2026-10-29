@@ -22,12 +22,13 @@ import ai.djl.modality.cv.transform.ToTensor;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.translate.Pipeline;
 import ai.djl.util.JsonUtils;
 import ai.djl.util.PairList;
 import ai.djl.util.Progress;
+
 import com.google.gson.reflect.TypeToken;
+
 import java.io.IOException;
 import java.io.Reader;
 import java.lang.reflect.Type;
@@ -40,7 +41,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Pikachu image detection dataset that contains multiple Pikachus in each image. */
+/**
+ * Pikachu image detection dataset that contains multiple Pikachus in each image.
+ *
+ * <p>It was based on a section from the [Dive into Deep Learning
+ * book](http://d2l.ai/chapter_computer-vision/object-detection-dataset.html). It contains 1000
+ * Pikachu images of different angles and sizes created using an open source 3D Pikachu model. Each
+ * image contains only a single pikachu.
+ */
 public class PikachuDetection extends ObjectDetectionDataset {
 
     private static final String VERSION = "1.0";
@@ -50,16 +58,15 @@ public class PikachuDetection extends ObjectDetectionDataset {
     private List<Path> imagePaths;
     private PairList<Long, Rectangle> labels;
 
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     protected PikachuDetection(Builder builder) {
         super(builder);
         usage = builder.usage;
+        mrl = builder.getMrl();
         imagePaths = new ArrayList<>();
         labels = new PairList<>();
-        MRL mrl = MRL.dataset(CV.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, VERSION);
     }
 
     /**
@@ -78,10 +85,10 @@ public class PikachuDetection extends ObjectDetectionDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
 
-        Path root = resource.getRepository().getResourceDirectory(artifact);
+        Path root = mrl.getRepository().getResourceDirectory(artifact);
         Path usagePath;
         switch (usage) {
             case TRAIN:
@@ -114,9 +121,16 @@ public class PikachuDetection extends ObjectDetectionDataset {
         prepared = true;
     }
 
+    /** {@inheritDoc} */
     @Override
     public PairList<Long, Rectangle> getObjects(long index) {
         return new PairList<>(Collections.singletonList(labels.get((int) index)));
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<String> getClasses() {
+        return Collections.singletonList("pikachu");
     }
 
     /** {@inheritDoc} */
@@ -131,11 +145,13 @@ public class PikachuDetection extends ObjectDetectionDataset {
         return ImageFactory.getInstance().fromFile(imagePaths.get(idx));
     }
 
+    /** {@inheritDoc} */
     @Override
     public Optional<Integer> getImageWidth() {
         return Optional.empty();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Optional<Integer> getImageHeight() {
         return Optional.empty();
@@ -223,6 +239,10 @@ public class PikachuDetection extends ObjectDetectionDataset {
                 pipeline = new Pipeline(new ToTensor());
             }
             return new PikachuDetection(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(CV.ANY, groupId, artifactId, VERSION);
         }
     }
 }

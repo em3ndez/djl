@@ -12,6 +12,7 @@
  */
 package ai.djl.repository.zoo;
 
+import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.inference.Predictor;
 import ai.djl.ndarray.NDManager;
@@ -22,6 +23,7 @@ import ai.djl.training.Trainer;
 import ai.djl.training.TrainingConfig;
 import ai.djl.translate.Translator;
 import ai.djl.util.PairList;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -55,6 +57,12 @@ public class ZooModel<I, O> implements Model {
     /** {@inheritDoc} */
     @Override
     public void load(Path modelPath, String prefix, Map<String, ?> options) {
+        throw new IllegalArgumentException("ZooModel should not be re-loaded.");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void load(InputStream modelStream, Map<String, ?> options) throws IOException {
         throw new IllegalArgumentException("ZooModel should not be re-loaded.");
     }
 
@@ -111,6 +119,12 @@ public class ZooModel<I, O> implements Model {
 
     /** {@inheritDoc} */
     @Override
+    public Map<String, String> getProperties() {
+        return model.getProperties();
+    }
+
+    /** {@inheritDoc} */
+    @Override
     public Trainer newTrainer(TrainingConfig trainingConfig) {
         return model.newTrainer(trainingConfig);
     }
@@ -124,10 +138,21 @@ public class ZooModel<I, O> implements Model {
         return newPredictor(translator);
     }
 
+    /**
+     * Creates a new Predictor based on the model with the default translator and a specified
+     * device.
+     *
+     * @param device the device to use for prediction
+     * @return an instance of {@code Predictor}
+     */
+    public Predictor<I, O> newPredictor(Device device) {
+        return model.newPredictor(translator, device);
+    }
+
     /** {@inheritDoc} */
     @Override
-    public <P, Q> Predictor<P, Q> newPredictor(Translator<P, Q> translator) {
-        return model.newPredictor(translator);
+    public <P, Q> Predictor<P, Q> newPredictor(Translator<P, Q> translator, Device device) {
+        return model.newPredictor(translator, device);
     }
 
     /**

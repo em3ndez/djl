@@ -15,8 +15,9 @@ package ai.djl.integration.tests.nn;
 import ai.djl.Application;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
-import ai.djl.engine.Engine;
+import ai.djl.ModelException;
 import ai.djl.inference.Predictor;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.modality.Classifications;
 import ai.djl.modality.cv.Image;
 import ai.djl.ndarray.NDList;
@@ -29,88 +30,70 @@ import ai.djl.nn.SymbolBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
-import ai.djl.testing.Assertions;
 import ai.djl.training.ParameterStore;
 import ai.djl.training.util.ProgressBar;
-import ai.djl.translate.NoopTranslator;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Utils;
 import ai.djl.util.ZipUtils;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
+
+import org.testng.Assert;
+import org.testng.SkipException;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import org.testng.Assert;
-import org.testng.annotations.Test;
+import java.util.Map;
 
 public class BlockFactoryTest {
 
     @Test
-    public void testBlockLoadingSaving()
-            throws IOException, ModelNotFoundException, MalformedModelException,
-                    TranslateException {
-        TestBlockFactory factory = new TestBlockFactory();
-        Model model = factory.getRemoveLastBlockModel();
-        try (NDManager manager = NDManager.newBaseManager()) {
-            Block block = model.getBlock();
-            block.forward(
-                    new ParameterStore(manager, true),
-                    new NDList(manager.ones(new Shape(1, 3, 32, 32))),
-                    true);
-            ByteArrayOutputStream os = new ByteArrayOutputStream();
-            block.saveParameters(new DataOutputStream(os));
-            ByteArrayInputStream bis = new ByteArrayInputStream(os.toByteArray());
-            Block newBlock = factory.newBlock(manager);
-            newBlock.loadParameters(manager, new DataInputStream(bis));
-            try (Model test = Model.newInstance("test")) {
-                test.setBlock(newBlock);
-                try (Predictor<NDList, NDList> predOrigin =
-                                model.newPredictor(new NoopTranslator());
-                        Predictor<NDList, NDList> predDest =
-                                test.newPredictor(new NoopTranslator())) {
-                    NDList input = new NDList(manager.ones(new Shape(1, 3, 32, 32)));
-                    NDList originOut = predOrigin.predict(input);
-                    NDList destOut = predDest.predict(input);
-                    Assertions.assertAlmostEquals(originOut, destOut);
-                }
-            }
-        }
-    }
-
-    @Test
     public void testBlockFactoryLoadingFromZip()
-            throws MalformedModelException, ModelNotFoundException, IOException,
-                    TranslateException {
+            throws ModelException, IOException, TranslateException {
         Path savedDir = Paths.get("build/testBlockFactory");
         Utils.deleteQuietly(savedDir);
-        Path zipPath = prepareModel(savedDir);
+        Path zipPath;
+        try {
+            zipPath = prepareModel(savedDir);
+        } catch (ModelNotFoundException e) {
+            throw new UnsupportedOperationException(
+                    "No test model for engine: " + TestUtils.getEngine(), e);
+        }
         // load model from here
         Criteria<NDList, NDList> criteria =
                 Criteria.builder()
                         .setTypes(NDList.class, NDList.class)
                         .optModelPath(zipPath)
                         .optModelName("exported")
+                        .optEngine(TestUtils.getEngine())
                         .build();
-        try (NDManager manager = NDManager.newBaseManager()) {
-            try (ZooModel<NDList, NDList> model = ModelZoo.loadModel(criteria);
-                    Predictor<NDList, NDList> pred = model.newPredictor()) {
-                NDList destOut = pred.predict(new NDList(manager.ones(new Shape(1, 3, 32, 32))));
-                Assert.assertEquals(destOut.singletonOrThrow().getShape(), new Shape(1, 10));
-            }
+        // The BlockFactory ships as a precompiled .class inside the model and no blockFactory
+        // argument names it, so DJL discovers it by scanning the model's classes directory. Loading
+        // classes bundled with a model is opt-in, so enable it for this load. The environment
+        // variable takes precedence over the system property, so an environment that pins it off
+        // would make the property a no-op and the assertion below fail for an unrelated reason.
+        String envOptIn = Utils.getenv("DJL_LOAD_BUNDLED_CLASSES");
+        if (envOptIn != null && !Boolean.parseBoolean(envOptIn)) {
+            throw new SkipException(
+                    "DJL_LOAD_BUNDLED_CLASSES is set to " + envOptIn + " in the environment");
+        }
+        System.setProperty("ai.djl.load_bundled_classes", "true");
+        try (ZooModel<NDList, NDList> model = criteria.loadModel();
+                Predictor<NDList, NDList> pred = model.newPredictor()) {
+            NDManager manager = model.getNDManager();
+            NDList destOut = pred.predict(new NDList(manager.ones(new Shape(1, 3, 32, 32))));
+            Assert.assertEquals(destOut.singletonOrThrow().getShape(), new Shape(1, 10));
+        } finally {
+            System.clearProperty("ai.djl.load_bundled_classes");
         }
     }
 
-    private Path prepareModel(Path savedDir)
-            throws IOException, ModelNotFoundException, MalformedModelException {
+    private Path prepareModel(Path savedDir) throws IOException, ModelException {
         TestBlockFactory factory = new TestBlockFactory();
-        Model model = factory.getRemoveLastBlockModel();
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (Model model = factory.getRemoveLastBlockModel();
+                NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             Block block = model.getBlock();
             block.forward(
                     new ParameterStore(manager, true),
@@ -124,28 +107,28 @@ public class BlockFactoryTest {
                 Paths.get(
                         "build/classes/java/main/ai/djl/integration/tests/nn/BlockFactoryTest$TestBlockFactory.class"),
                 classDir.resolve("BlockFactoryTest$TestBlockFactory.class"));
-        Path zipPath =
-                Paths.get("build/testBlockFactory" + Engine.getInstance().getEngineName() + ".zip");
+        Path zipPath = Paths.get("build/testBlockFactory" + TestUtils.getEngine() + ".zip");
         Files.deleteIfExists(zipPath);
         ZipUtils.zip(savedDir, zipPath, false);
         return zipPath;
     }
 
+    @SuppressWarnings("PMD.TestClassWithoutTestCases")
     public static class TestBlockFactory implements BlockFactory {
 
         private static final long serialVersionUID = 1234567L;
 
         @Override
-        public Block newBlock(NDManager manager) {
+        public Block newBlock(Model model, Path modelPath, Map<String, ?> arguments) {
             SequentialBlock newBlock = new SequentialBlock();
-            newBlock.add(SymbolBlock.newInstance(manager));
+            newBlock.add(SymbolBlock.newInstance(model.getNDManager()));
             newBlock.add(Linear.builder().setUnits(10).build());
             return newBlock;
         }
 
         public Model getRemoveLastBlockModel()
                 throws MalformedModelException, ModelNotFoundException, IOException {
-            String name = Engine.getInstance().getEngineName();
+            String name = TestUtils.getEngine();
             Criteria.Builder<Image, Classifications> builder =
                     Criteria.builder()
                             .optApplication(Application.CV.IMAGE_CLASSIFICATION)
@@ -154,8 +137,9 @@ public class BlockFactoryTest {
                             .optArtifactId("resnet")
                             .optEngine(name)
                             .optGroupId("ai.djl." + name.toLowerCase())
-                            .optFilter("layers", "50");
-            Model model = ModelZoo.loadModel(builder.build());
+                            .optFilter("layers", "50")
+                            .optFilter("flavor", "v2");
+            Model model = builder.build().loadModel();
             SequentialBlock newBlock = new SequentialBlock();
             SymbolBlock block = (SymbolBlock) model.getBlock();
             newBlock.add(block);

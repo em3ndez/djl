@@ -13,9 +13,9 @@
 
 package ai.djl.integration.tests.model_zoo.classification;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.basicmodelzoo.cv.classification.AlexNet;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -33,10 +33,12 @@ import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
 import ai.djl.translate.Batchifier;
 import ai.djl.util.PairList;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class AlexNetTest {
 
@@ -44,10 +46,10 @@ public class AlexNetTest {
     public void testTrainWithDefaultChannels() {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                        .optDevices(Device.getDevices(2));
+                        .optDevices(TestUtils.getDevices(2));
 
         Block alexNet = AlexNet.builder().build();
-        try (Model model = Model.newInstance("alexnet")) {
+        try (Model model = Model.newInstance("alexnet", TestUtils.getEngine())) {
             model.setBlock(alexNet);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 1;
@@ -98,13 +100,13 @@ public class AlexNetTest {
     public void testTrainWithCustomChannels() {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                        .optDevices(Device.getDevices(2));
+                        .optDevices(TestUtils.getDevices(2));
         Block alexNet =
                 AlexNet.builder()
                         .setDropOutRate(0.8f)
                         .setNumChannels(new int[] {128, 128, 128, 512, 384, 2048, 2048})
                         .build();
-        try (Model model = Model.newInstance("alexnet")) {
+        try (Model model = Model.newInstance("alexnet", TestUtils.getEngine())) {
             model.setBlock(alexNet);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 1;
@@ -153,48 +155,47 @@ public class AlexNetTest {
 
     @Test
     public void testOutputShapes() {
-        NDManager manager = NDManager.newBaseManager();
-        int batchSize = 2;
-        NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
-        Shape currentShape = x.getShape();
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
+            int batchSize = 2;
+            NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
+            Shape currentShape = x.getShape();
 
-        Block alexNet = AlexNet.builder().build();
-        alexNet.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
-        alexNet.initialize(manager, DataType.FLOAT32, currentShape);
+            Block alexNet = AlexNet.builder().build();
+            alexNet.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+            alexNet.initialize(manager, DataType.FLOAT32, currentShape);
 
-        Map<String, Shape> shapeMap = new ConcurrentHashMap<>();
-        for (int i = 0; i < alexNet.getChildren().size(); i++) {
+            Map<String, Shape> shapeMap = new ConcurrentHashMap<>();
+            for (int i = 0; i < alexNet.getChildren().size(); i++) {
 
-            Shape[] newShape =
-                    alexNet.getChildren()
-                            .get(i)
-                            .getValue()
-                            .getOutputShapes(new Shape[] {currentShape});
-            currentShape = newShape[0];
-            shapeMap.put(alexNet.getChildren().get(i).getKey(), currentShape);
+                Shape[] newShape =
+                        alexNet.getChildren()
+                                .get(i)
+                                .getValue()
+                                .getOutputShapes(new Shape[] {currentShape});
+                currentShape = newShape[0];
+                shapeMap.put(alexNet.getChildren().get(i).getKey(), currentShape);
+            }
+
+            Assert.assertEquals(shapeMap.get("01Conv2d"), new Shape(batchSize, 96, 54, 54));
+            Assert.assertEquals(shapeMap.get("04Conv2d"), new Shape(batchSize, 256, 26, 26));
+            Assert.assertEquals(shapeMap.get("07Conv2d"), new Shape(batchSize, 384, 12, 12));
+            Assert.assertEquals(shapeMap.get("13LambdaBlock"), new Shape(batchSize, 256, 5, 5));
+            Assert.assertEquals(shapeMap.get("17Dropout"), new Shape(batchSize, 4096));
         }
-
-        Assert.assertEquals(shapeMap.get("01Conv2d"), new Shape(batchSize, 96, 54, 54));
-        Assert.assertEquals(shapeMap.get("04Conv2d"), new Shape(batchSize, 256, 26, 26));
-        Assert.assertEquals(shapeMap.get("07Conv2d"), new Shape(batchSize, 384, 12, 12));
-        Assert.assertEquals(shapeMap.get("13LambdaBlock"), new Shape(batchSize, 256, 5, 5));
-        Assert.assertEquals(shapeMap.get("17Dropout"), new Shape(batchSize, 4096));
-        manager.close();
     }
 
     @Test
     public void testForwardMethod() {
-        NDManager manager = NDManager.newBaseManager();
-        Block alexNet = AlexNet.builder().build();
-        int batchSize = 1;
-        NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
-        alexNet.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
-        alexNet.initialize(manager, DataType.FLOAT32, x.getShape());
-        NDArray xHat =
-                alexNet.forward(new ParameterStore(manager, true), new NDList(x), false)
-                        .singletonOrThrow();
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
+            Block alexNet = AlexNet.builder().build();
+            int batchSize = 1;
+            NDArray x = manager.ones(new Shape(batchSize, 1, 224, 224));
+            alexNet.setInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+            alexNet.initialize(manager, DataType.FLOAT32, x.getShape());
+            ParameterStore ps = new ParameterStore(manager, true);
+            NDArray xHat = alexNet.forward(ps, new NDList(x), false).singletonOrThrow();
 
-        Assert.assertEquals(xHat.getShape(), new Shape(batchSize, 10));
-        manager.close();
+            Assert.assertEquals(xHat.getShape(), new Shape(batchSize, 10));
+        }
     }
 }

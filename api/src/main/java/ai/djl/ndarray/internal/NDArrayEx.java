@@ -21,15 +21,16 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.ndarray.types.SparseFormat;
 import ai.djl.nn.Activation;
 import ai.djl.nn.recurrent.RNN;
+
 import java.util.List;
 
 /** An internal interface that encapsulates engine specific operations. */
 @SuppressWarnings("MissingJavadocMethod")
 public interface NDArrayEx {
 
-    ////////////////////////////////////////
+    /*
     // NDArrays
-    ////////////////////////////////////////
+    */
 
     /**
      * Applies reverse division with a scalar - i.e., (n / thisArrayValues).
@@ -37,7 +38,11 @@ public interface NDArrayEx {
      * @param n the Value to use for reverse division
      * @return a copy of the array after applying reverse division
      */
-    NDArray rdiv(Number n);
+    default NDArray rdiv(Number n) {
+        NDArray array = getArray();
+        NDArray b = array.getManager().create(n).toType(array.getDataType(), false);
+        return rdiv(b);
+    }
 
     /**
      * Applies reverse division with a scalar - i.e., (n / thisArrayValues).
@@ -45,7 +50,9 @@ public interface NDArrayEx {
      * @param b the ndarray to use for reverse division
      * @return a copy of the array after applying reverse division
      */
-    NDArray rdiv(NDArray b);
+    default NDArray rdiv(NDArray b) {
+        return b.div(getArray());
+    }
 
     /**
      * Applies in place reverse division - i.e., (n / thisArrayValues).
@@ -53,7 +60,11 @@ public interface NDArrayEx {
      * @param n the value to use for reverse division
      * @return this array after applying reverse division
      */
-    NDArray rdivi(Number n);
+    default NDArray rdivi(Number n) {
+        NDArray array = getArray();
+        NDArray b = array.getManager().create(n).toType(array.getDataType(), false);
+        return rdivi(b);
+    }
 
     /**
      * Applies in place reverse division - i.e., (n / thisArrayValues).
@@ -69,7 +80,9 @@ public interface NDArrayEx {
      * @param n the value to use for reverse subtraction
      * @return a copy of array after reverse subtraction
      */
-    NDArray rsub(Number n);
+    default NDArray rsub(Number n) {
+        return getArray().sub(n).neg();
+    }
 
     /**
      * Applies reverse subtraction with duplicates - i.e., (n - thisArrayValues).
@@ -77,7 +90,9 @@ public interface NDArrayEx {
      * @param b the ndarray to use for reverse subtraction
      * @return a copy of the array after reverse subtraction
      */
-    NDArray rsub(NDArray b);
+    default NDArray rsub(NDArray b) {
+        return b.sub(getArray());
+    }
 
     /**
      * Applies reverse subtraction in place - i.e., (n - thisArrayValues).
@@ -85,7 +100,9 @@ public interface NDArrayEx {
      * @param n the value to use for reverse subtraction
      * @return this array after reverse subtraction
      */
-    NDArray rsubi(Number n);
+    default NDArray rsubi(Number n) {
+        return getArray().subi(n).negi();
+    }
 
     /**
      * Applies reverse subtraction in place - i.e., (n - thisArrayValues).
@@ -93,7 +110,9 @@ public interface NDArrayEx {
      * @param b the ndarray to use for reverse subtraction
      * @return this array after reverse subtraction
      */
-    NDArray rsubi(NDArray b);
+    default NDArray rsubi(NDArray b) {
+        return getArray().subi(b).negi();
+    }
 
     /**
      * Applies reverse remainder of division with a scalar.
@@ -101,7 +120,11 @@ public interface NDArrayEx {
      * @param n the value to use for reverse division
      * @return a copy of array after applying reverse division
      */
-    NDArray rmod(Number n);
+    default NDArray rmod(Number n) {
+        NDArray array = getArray();
+        NDArray b = array.getManager().create(n).toType(array.getDataType(), false);
+        return rmod(b);
+    }
 
     /**
      * Applies reverse remainder of division.
@@ -109,7 +132,9 @@ public interface NDArrayEx {
      * @param b the ndarray to use for reverse division
      * @return a copy of array after applying reverse division
      */
-    NDArray rmod(NDArray b);
+    default NDArray rmod(NDArray b) {
+        return b.mod(getArray());
+    }
 
     /**
      * Applies in place reverse remainder of division with a scalar.
@@ -117,7 +142,11 @@ public interface NDArrayEx {
      * @param n the value to use for reverse division
      * @return this array after applying reverse division
      */
-    NDArray rmodi(Number n);
+    default NDArray rmodi(Number n) {
+        NDArray array = getArray();
+        NDArray b = array.getManager().create(n).toType(array.getDataType(), false);
+        return rmodi(b);
+    }
 
     /**
      * Applies in place reverse remainder of division.
@@ -133,7 +162,11 @@ public interface NDArrayEx {
      * @param n the value to use for reverse power
      * @return a copy of array after applying reverse power
      */
-    NDArray rpow(Number n);
+    default NDArray rpow(Number n) {
+        NDArray array = getArray();
+        NDArray b = array.getManager().create(n).toType(array.getDataType(), false);
+        return b.pow(array);
+    }
 
     /**
      * Reverses the power of each element being raised in the {@code NDArray} in place.
@@ -143,9 +176,9 @@ public interface NDArrayEx {
      */
     NDArray rpowi(Number n);
 
-    ////////////////////////////////////////
+    /*
     // Activations
-    ////////////////////////////////////////
+    */
 
     /**
      * Computes rectified linear activation.
@@ -178,9 +211,9 @@ public interface NDArrayEx {
         return getArray().exp().add(1).log2().tanh().mul(getArray());
     }
 
-    ////////////////////////////////////////
+    /*
     // Pooling Operations
-    ////////////////////////////////////////
+    */
 
     NDArray maxPool(Shape kernelShape, Shape stride, Shape padding, boolean ceilMode);
 
@@ -200,9 +233,9 @@ public interface NDArrayEx {
 
     NDArray globalLpPool(float normType);
 
-    ////////////////////////////////////////
+    /*
     // Optimizer
-    ////////////////////////////////////////
+    */
 
     void adadeltaUpdate(
             NDList inputs,
@@ -226,13 +259,15 @@ public interface NDArrayEx {
             NDList inputs,
             NDList weights,
             float learningRate,
+            float learningRateBiasCorrection,
             float weightDecay,
             float rescaleGrad,
             float clipGrad,
             float beta1,
             float beta2,
             float epsilon,
-            boolean lazyUpdate);
+            boolean lazyUpdate,
+            boolean adamw);
 
     void nagUpdate(
             NDList inputs,
@@ -265,9 +300,9 @@ public interface NDArrayEx {
             float momentum,
             boolean lazyUpdate);
 
-    ////////////////////////////////////////
+    /*
     // Neural network
-    ////////////////////////////////////////
+    */
 
     NDList convolution(
             NDArray input,
@@ -295,6 +330,8 @@ public interface NDArrayEx {
     NDList prelu(NDArray input, NDArray alpha);
 
     NDList dropout(NDArray input, float rate, boolean training);
+
+    NDList layerNorm(NDArray input, Shape normalizedShape, NDArray gamma, NDArray beta, float eps);
 
     NDList batchNorm(
             NDArray input,
@@ -393,9 +430,9 @@ public interface NDArrayEx {
             boolean bidirectional,
             boolean batchFirst);
 
-    ////////////////////////////////////////
+    /*
     // Image and CV
-    ////////////////////////////////////////
+    */
 
     /**
      * Normalizes a NDArray of shape CHW or NCHW with mean and standard deviation.
@@ -429,7 +466,12 @@ public interface NDArrayEx {
             if (dim == 3) {
                 result = result.expandDims(0);
             }
-            result = result.div(255.0).transpose(0, 3, 1, 2);
+            // For Apple Silicon MPS it is important not to switch to 64-bit float here
+            if (result.getDataType() == DataType.FLOAT32) {
+                result = result.div(255.0f).transpose(0, 3, 1, 2);
+            } else {
+                result = result.div(255.0).transpose(0, 3, 1, 2);
+            }
             if (dim == 3) {
                 result = result.squeeze(0);
             }
@@ -442,6 +484,8 @@ public interface NDArrayEx {
             return result;
         }
     }
+
+    NDArray interpolation(long[] size, int mode, boolean alignCorners);
 
     NDArray resize(int width, int height, int interpolation);
 
@@ -477,16 +521,17 @@ public interface NDArrayEx {
     // TODO: add TorchVision support
     NDArray randomColorJitter(float brightness, float contrast, float saturation, float hue);
 
-    ////////////////////////////////////////
+    /*
     // Miscellaneous
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns an {@link NDArrayIndexer}.
      *
+     * @param manager the manager used to create the arrays
      * @return an {@link NDArrayIndexer}
      */
-    NDArrayIndexer getIndexer();
+    NDArrayIndexer getIndexer(NDManager manager);
 
     /**
      * Returns elements chosen from the {@code NDArray} or the other {@code NDArray} depending on

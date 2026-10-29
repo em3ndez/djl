@@ -12,8 +12,10 @@
  */
 package ai.djl.integration.tests.ndarray;
 
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -21,7 +23,7 @@ public class NDListTest {
 
     @Test
     public void testEncode() {
-        try (NDManager manager = NDManager.newBaseManager()) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getEngine())) {
             Assert.assertThrows(
                     () -> {
                         // invalid NDList length

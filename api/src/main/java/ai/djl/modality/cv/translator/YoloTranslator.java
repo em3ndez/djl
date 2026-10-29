@@ -19,6 +19,7 @@ import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.translate.TranslatorContext;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,10 +44,10 @@ public class YoloTranslator extends ObjectDetectionTranslator {
         NDArray boundingBoxes = list.get(2);
         int detected = Math.toIntExact(probs.length);
 
-        NDArray xMin = boundingBoxes.get(":, 0").clip(0, imageWidth).div(imageWidth);
-        NDArray yMin = boundingBoxes.get(":, 1").clip(0, imageHeight).div(imageHeight);
-        NDArray xMax = boundingBoxes.get(":, 2").clip(0, imageWidth).div(imageWidth);
-        NDArray yMax = boundingBoxes.get(":, 3").clip(0, imageHeight).div(imageHeight);
+        NDArray xMin = boundingBoxes.get(":, 0").clip(0, width).div(width);
+        NDArray yMin = boundingBoxes.get(":, 1").clip(0, height).div(height);
+        NDArray xMax = boundingBoxes.get(":, 2").clip(0, width).div(width);
+        NDArray yMax = boundingBoxes.get(":, 3").clip(0, height).div(height);
 
         float[] boxX = xMin.toFloatArray();
         float[] boxY = yMin.toFloatArray();
@@ -62,10 +63,26 @@ public class YoloTranslator extends ObjectDetectionTranslator {
             }
             retClasses.add(classes.get(classIndices[i]));
             retProbs.add(probs[i]);
-            Rectangle rect = new Rectangle(boxX[i], boxY[i], boxWidth[i], boxHeight[i]);
+            Rectangle rect;
+            if (applyRatio) {
+                rect =
+                        new Rectangle(
+                                boxX[i] / width,
+                                boxY[i] / height,
+                                boxWidth[i] / width,
+                                boxHeight[i] / height);
+            } else {
+                rect = new Rectangle(boxX[i], boxY[i], boxWidth[i], boxHeight[i]);
+            }
             retBB.add(rect);
         }
         return new DetectedObjects(retClasses, retProbs, retBB);
+    }
+
+    static NDArray xywh2xyxy(NDArray array) {
+        NDArray xy = array.get("..., :2");
+        NDArray wh = array.get("..., 2:").div(2);
+        return xy.sub(wh).concat(xy.add(wh), -1);
     }
 
     /**

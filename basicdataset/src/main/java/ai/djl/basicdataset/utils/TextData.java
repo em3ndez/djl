@@ -13,7 +13,7 @@
 package ai.djl.basicdataset.utils;
 
 import ai.djl.basicdataset.nlp.TextDataset;
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.DefaultVocabulary;
 import ai.djl.modality.nlp.Vocabulary;
 import ai.djl.modality.nlp.embedding.EmbeddingException;
 import ai.djl.modality.nlp.embedding.TextEmbedding;
@@ -26,6 +26,7 @@ import ai.djl.modality.nlp.preprocess.TextProcessor;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDManager;
 import ai.djl.nn.AbstractBlock;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -102,7 +103,7 @@ public class TextData {
         }
 
         if (vocabulary == null) {
-            SimpleVocabulary.Builder vocabularyBuilder = SimpleVocabulary.builder();
+            DefaultVocabulary.Builder vocabularyBuilder = DefaultVocabulary.builder();
             vocabularyBuilder
                     .optMinFrequency(3)
                     .optReservedTokens(reservedTokens)
@@ -173,9 +174,9 @@ public class TextData {
     }
 
     /**
-     * Gets the {@link SimpleVocabulary} built while preprocessing the text data.
+     * Gets the {@link DefaultVocabulary} built while preprocessing the text data.
      *
-     * @return the {@link SimpleVocabulary}
+     * @return the {@link DefaultVocabulary}
      */
     public Vocabulary getVocabulary() {
         if (vocabulary == null) {

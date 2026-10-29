@@ -17,6 +17,7 @@ import ai.djl.nn.Activation;
 import ai.djl.nn.Blocks;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
+
 import java.util.function.Function;
 
 /**
@@ -55,10 +56,11 @@ public class Mlp extends SequentialBlock {
      * @param hidden the sizes of all of the hidden layers
      * @param activation the activation function to use
      */
+    @SuppressWarnings("this-escape")
     public Mlp(int input, int output, int[] hidden, Function<NDList, NDList> activation) {
         add(Blocks.batchFlattenBlock(input));
-        for (int hiddenSize : hidden) {
-            add(Linear.builder().setUnits(hiddenSize).build());
+        for (int hiddenLayerSize : hidden) {
+            add(Linear.builder().setUnits(hiddenLayerSize).build());
             add(activation);
         }
 

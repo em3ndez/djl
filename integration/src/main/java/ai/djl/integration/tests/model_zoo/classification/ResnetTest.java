@@ -13,7 +13,6 @@
 package ai.djl.integration.tests.model_zoo.classification;
 
 import ai.djl.Application;
-import ai.djl.Device;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.basicmodelzoo.BasicModelZoo;
@@ -30,7 +29,6 @@ import ai.djl.nn.Block;
 import ai.djl.nn.Parameter;
 import ai.djl.repository.zoo.Criteria;
 import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.repository.zoo.ZooModel;
 import ai.djl.testing.Assertions;
 import ai.djl.training.DefaultTrainingConfig;
@@ -44,11 +42,13 @@ import ai.djl.translate.Batchifier;
 import ai.djl.translate.NoopTranslator;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.PairList;
+
+import org.testng.Assert;
+import org.testng.annotations.Test;
+
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
-import org.testng.SkipException;
-import org.testng.annotations.Test;
 
 public class ResnetTest {
 
@@ -56,7 +56,7 @@ public class ResnetTest {
     public void testTrain() {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                        .optDevices(Device.getDevices(2))
+                        .optDevices(TestUtils.getDevices(2))
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
 
         Block resNet50 =
@@ -65,7 +65,7 @@ public class ResnetTest {
                         .setNumLayers(50)
                         .setOutSize(10)
                         .build();
-        try (Model model = Model.newInstance("resnet")) {
+        try (Model model = Model.newInstance("resnet", TestUtils.getEngine())) {
             model.setBlock(resNet50);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 1;
@@ -103,13 +103,54 @@ public class ResnetTest {
     }
 
     @Test
+    public void testWithIntermediate() throws TranslateException {
+        TrainingConfig config =
+                new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
+                        .optDevices(TestUtils.getDevices(2))
+                        .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+
+        Block resNet50 =
+                ResNetV1.builder()
+                        .setImageShape(new Shape(1, 28, 28))
+                        .setNumLayers(50)
+                        .setOutSize(10)
+                        .build()
+                        .setReturnIntermediate(true);
+
+        try (Model model = Model.newInstance("resnet", TestUtils.getEngine())) {
+            model.setBlock(resNet50);
+            int batchSize = 1;
+            Shape inputShape = new Shape(batchSize, 1, 28, 28);
+            int resultSize = 29;
+            try (Trainer trainer = model.newTrainer(config)) {
+                trainer.initialize(inputShape);
+
+                Assert.assertEquals(
+                        resNet50.getOutputShapes(new Shape[] {inputShape}).length, resultSize);
+            }
+            try (Predictor<NDList, NDList> predictor = model.newPredictor(new NoopTranslator())) {
+                NDManager manager = model.getNDManager();
+                NDList result = predictor.predict(new NDList(manager.ones(inputShape)));
+                Assert.assertEquals(result.size(), resultSize);
+            }
+        }
+    }
+
+    @Test
     public void testLoadPredict()
-            throws IOException, ModelNotFoundException, TranslateException,
+            throws IOException,
+                    ModelNotFoundException,
+                    TranslateException,
                     MalformedModelException {
         try (ZooModel<Image, Classifications> model = getModel()) {
             NoopTranslator translator = new NoopTranslator(Batchifier.STACK);
             try (Predictor<NDList, NDList> predictor = model.newPredictor(translator)) {
                 NDList input = new NDList(model.getNDManager().ones(new Shape(3, 32, 32)));
+
+                // Verify streaming does not work (due to Translator)
+                Assert.assertFalse(predictor.supportsStreaming());
+                Assert.assertThrows(() -> predictor.streamingPredict(input));
+
                 List<NDList> inputs = Collections.nCopies(16, input);
                 predictor.batchPredict(inputs);
             }
@@ -122,7 +163,7 @@ public class ResnetTest {
         try (ZooModel<Image, Classifications> model = getModel()) {
             TrainingConfig config =
                     new DefaultTrainingConfig(Loss.l1Loss())
-                            .optDevices(Device.getDevices(2))
+                            .optDevices(TestUtils.getDevices(2))
                             .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 2;
@@ -152,9 +193,7 @@ public class ResnetTest {
 
     private ZooModel<Image, Classifications> getModel()
             throws IOException, ModelNotFoundException, MalformedModelException {
-        if (!TestUtils.isMxnet()) {
-            throw new SkipException("Resnet50-cifar10 model only available in MXNet");
-        }
+        TestUtils.requiresEngine("MXNet"); // Resnet50-cifar10 model only available in MXNet
 
         Criteria<Image, Classifications> criteria =
                 Criteria.builder()
@@ -166,6 +205,6 @@ public class ResnetTest {
                         .optFilter("dataset", "cifar10")
                         .build();
 
-        return ModelZoo.loadModel(criteria);
+        return criteria.loadModel();
     }
 }

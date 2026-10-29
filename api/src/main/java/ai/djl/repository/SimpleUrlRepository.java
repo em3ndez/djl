@@ -15,6 +15,11 @@ package ai.djl.repository;
 import ai.djl.Application;
 import ai.djl.repository.zoo.DefaultModelZoo;
 import ai.djl.util.Progress;
+import ai.djl.util.Utils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -24,8 +29,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * A {@code SimpleUrlRepository} is a {@link Repository} contains an archive file from a HTTP URL.
@@ -36,19 +39,24 @@ public class SimpleUrlRepository extends AbstractRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(SimpleUrlRepository.class);
 
-    private String name;
-    private URI uri;
+    private String fileName;
     private String artifactId;
     private String modelName;
 
     private Metadata metadata;
     private boolean resolved;
 
-    SimpleUrlRepository(String name, URI uri, String artifactId, String modelName) {
-        this.name = name;
-        this.uri = uri;
-        this.artifactId = artifactId;
-        this.modelName = modelName;
+    SimpleUrlRepository(String name, URI uri, String fileName) {
+        super(name, uri);
+        this.fileName = fileName;
+        modelName = arguments.get("model_name");
+        artifactId = arguments.get("artifact_id");
+        if (artifactId == null) {
+            artifactId = FilenameUtils.getNamePart(fileName);
+        }
+        if (modelName == null) {
+            modelName = artifactId;
+        }
     }
 
     /** {@inheritDoc} */
@@ -59,26 +67,13 @@ public class SimpleUrlRepository extends AbstractRepository {
 
     /** {@inheritDoc} */
     @Override
-    public String getName() {
-        return name;
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public URI getBaseUri() {
-        return uri;
-    }
-
-    /** {@inheritDoc} */
-    @Override
     public Metadata locate(MRL mrl) throws IOException {
         return getMetadata();
     }
 
     /** {@inheritDoc} */
     @Override
-    public Artifact resolve(MRL mrl, String version, Map<String, String> filter)
-            throws IOException {
+    public Artifact resolve(MRL mrl, Map<String, String> filter) throws IOException {
         List<Artifact> artifacts = locate(mrl).getArtifacts();
         if (artifacts.isEmpty()) {
             return null;
@@ -92,11 +87,11 @@ public class SimpleUrlRepository extends AbstractRepository {
         try {
             Metadata m = getMetadata();
             if (m != null && !m.getArtifacts().isEmpty()) {
-                MRL mrl = MRL.undefined(m.getGroupId(), m.getArtifactId());
+                MRL mrl = MRL.undefined(this, m.getGroupId(), m.getArtifactId());
                 return Collections.singletonList(mrl);
             }
         } catch (IOException e) {
-            logger.warn("Failed to connect URL: " + uri, e);
+            logger.warn("Failed to connect URL: {}", uri, e);
         }
         return Collections.emptyList();
     }
@@ -106,8 +101,11 @@ public class SimpleUrlRepository extends AbstractRepository {
     protected void download(Path tmp, URI baseUri, Artifact.Item item, Progress progress)
             throws IOException {
         logger.debug("Downloading artifact: {} ...", uri);
-        try (InputStream is = uri.toURL().openStream()) {
-            save(is, tmp, baseUri, item, progress);
+        // Route through Utils.openUrl so the download is subject to the same URL handling
+        // (scheme restriction, non-public address blocking, redirect re-validation) instead of
+        // calling openStream() directly, which would bypass them.
+        try (InputStream is = Utils.openUrl(uri.toURL())) {
+            save(is, tmp, item, progress);
         }
     }
 
@@ -117,41 +115,49 @@ public class SimpleUrlRepository extends AbstractRepository {
         }
 
         Artifact artifact = new Artifact();
+        artifact.setName(modelName);
+        artifact.getArguments().putAll(arguments);
         Map<String, Artifact.Item> files = new ConcurrentHashMap<>();
         Artifact.Item item = new Artifact.Item();
         item.setUri(uri.getPath());
         item.setName(""); // avoid creating extra folder
+        item.setExtension(FilenameUtils.getFileType(fileName));
         item.setArtifact(artifact);
         item.setSize(getContentLength());
         files.put(artifactId, item);
         artifact.setFiles(files);
-        artifact.setName(modelName);
 
         metadata = new Metadata.MatchAllMetadata();
-        metadata.setApplication(Application.UNDEFINED);
-        metadata.setGroupId(DefaultModelZoo.GROUP_ID);
         metadata.setArtifactId(artifactId);
         metadata.setArtifacts(Collections.singletonList(artifact));
-        String hash = md5hash(uri.toString());
-        MRL mrl = MRL.model(Application.UNDEFINED, DefaultModelZoo.GROUP_ID, hash);
+        String hash = Utils.hash(uri.toString());
+        MRL mrl = model(Application.UNDEFINED, DefaultModelZoo.GROUP_ID, hash);
         metadata.setRepositoryUri(mrl.toURI());
+        resolved = true;
         return metadata;
     }
 
     private long getContentLength() throws IOException {
         String scheme = uri.getScheme();
         if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+            if (Utils.isOfflineMode()) {
+                // An unknown size is represented as -1, and the artifact may already be cached, so
+                // reporting the size as unknown keeps a cached model loadable offline. Probing here
+                // would fail the load before prepare() can find the cached resource directory.
+                logger.debug("Offline mode is enabled, skipping content length probe: {}", uri);
+                return -1;
+            }
             HttpURLConnection conn = null;
             try {
-                resolved = true;
-                conn = (HttpURLConnection) uri.toURL().openConnection();
-                conn.setRequestMethod("HEAD");
+                // Route the HEAD probe through the same handling as the download path, so
+                // redirects are resolved explicitly and every hop is checked.
+                conn = Utils.openHttpConnection(uri.toURL(), "HEAD", Collections.emptyMap());
                 int code = conn.getResponseCode();
                 if (code != 200) {
-                    logger.info("request error: " + code);
+                    logger.debug("Failed detect content length, error code: {}", code);
                     return -1;
                 }
-                return conn.getContentLength();
+                return conn.getContentLengthLong();
             } finally {
                 if (conn != null) {
                     conn.disconnect();

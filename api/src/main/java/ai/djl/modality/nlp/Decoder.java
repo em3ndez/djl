@@ -21,6 +21,7 @@ import ai.djl.nn.AbstractBlock;
 import ai.djl.nn.Block;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -41,6 +42,7 @@ public abstract class Decoder extends AbstractBlock {
      * @param block the block to be used to decode
      * @param version the version to use for parameter and metadata serialization
      */
+    @SuppressWarnings("this-escape")
     public Decoder(byte version, Block block) {
         super(version);
         this.block = addChildBlock("Block", block);

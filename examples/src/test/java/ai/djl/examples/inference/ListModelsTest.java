@@ -15,43 +15,50 @@ package ai.djl.examples.inference;
 import ai.djl.Application;
 import ai.djl.Application.CV;
 import ai.djl.Application.NLP;
-import ai.djl.ModelException;
-import ai.djl.repository.Artifact;
+import ai.djl.repository.MRL;
 import ai.djl.repository.zoo.Criteria;
+import ai.djl.repository.zoo.DefaultZooProvider;
 import ai.djl.repository.zoo.ModelZoo;
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Map;
+
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.Test;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 
 public class ListModelsTest {
 
     @AfterClass
     public void tearDown() {
         System.clearProperty("ai.djl.repository.zoo.location");
+        ModelZoo.registerModelZoo(new DefaultZooProvider());
     }
 
     @Test
-    public void testListModels() throws ModelException, IOException {
+    public void testListModels() throws IOException {
         Path path = Paths.get("../model-zoo/src/test/resources/mlrepo");
         String repoUrl = path.toRealPath().toAbsolutePath().toUri().toURL().toExternalForm();
         System.setProperty("ai.djl.repository.zoo.location", "src/test/resources," + repoUrl);
-        Map<Application, List<Artifact>> models = ModelZoo.listModels();
-        List<Artifact> artifacts = models.get(Application.UNDEFINED);
+        ModelZoo.registerModelZoo(new DefaultZooProvider());
+        Map<Application, List<MRL>> models = ModelZoo.listModels();
+        System.out.println(Arrays.toString(models.keySet().toArray()));
+        List<MRL> artifacts = models.get(Application.UNDEFINED);
         Assert.assertFalse(artifacts.isEmpty());
     }
 
     @Test
-    public void testListModelsWithApplication() throws ModelException, IOException {
+    public void testListModelsWithApplication() throws IOException {
         Path path = Paths.get("../model-zoo/src/test/resources/mlrepo");
         String repoUrl = path.toRealPath().toAbsolutePath().toUri().toURL().toExternalForm();
         System.setProperty("ai.djl.repository.zoo.location", "src/test/resources," + repoUrl);
+        ModelZoo.registerModelZoo(new DefaultZooProvider());
         Criteria<?, ?> criteria = Criteria.builder().optApplication(NLP.ANY).build();
-        Map<Application, List<Artifact>> models = ModelZoo.listModels(criteria);
+        Map<Application, List<MRL>> models = ModelZoo.listModels(criteria);
 
         for (Application application : models.keySet()) {
             Assert.assertTrue(

@@ -6,7 +6,7 @@ In this example, you learn how to implement inference code with Deep Java Librar
 
 The following is the instance segmentation example source code:
 
-[InstanceSegmentation.java](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/InstanceSegmentation.java).
+[InstanceSegmentation.java](https://github.com/deepjavalibrary/djl/blob/master/examples/src/main/java/ai/djl/examples/inference/cv/InstanceSegmentation.java).
 
 
 ## Setup guide
@@ -22,9 +22,9 @@ You can find the image used in this example in project test resource folder: `sr
 
 ### Build the project and run
 
-```
+```sh
 cd examples
-./gradlew run -Dmain=ai.djl.examples.inference.InstanceSegmentation
+./gradlew run -Dmain=ai.djl.examples.inference.cv.InstanceSegmentation
 ```
 
 This should produce the following output
@@ -32,12 +32,12 @@ This should produce the following output
 ```text
 [INFO ] - Segmentation result image has been saved in: build/output/instances.png
 [INFO ] - [
-	class: "bicycle", probability: 0.99887, bounds: [x=0.095, y=0.214, width=0.477, height=0.683]
-	class: "bicycle", probability: 0.97689, bounds: [x=0.495, y=0.183, width=0.434, height=0.662]
+	{"class": "bicycle", "probability": 0.99887, "bounds": {"x"=0.095, "y"=0.214, "width"=0.477, "height"=0.683}}
+	{"class": "bicycle", "probability": 0.97689, "bounds": {"x"=0.495, "y"=0.183, "width"=0.434, "height"=0.662}}
 ]
 ```
 
 
-With the previous command, an output image with bounding box around all objects will be saved at: build/output/instances.jpg:
+With the previous command, an output image with bounding box around all objects will be saved at: build/output/instances.png:
 
 ![detected-instances](img/detected_instances.png)

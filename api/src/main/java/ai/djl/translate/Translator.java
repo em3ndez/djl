@@ -12,16 +12,24 @@
  */
 package ai.djl.translate;
 
-import ai.djl.Model;
 import ai.djl.inference.Predictor;
-import ai.djl.ndarray.NDManager;
-import java.io.IOException;
+import ai.djl.ndarray.NDList;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The {@code Translator} interface provides model pre-processing and postprocessing functionality.
  *
- * <p>Users can use this in {@link Predictor} with input and output objects specified. The following
- * is an example of processing an image and creating classification output:
+ * <p>Users can use this in {@link Predictor} with input and output objects specified. The
+ * recommended flow is to use the Translator to translate only a single data item at a time ({@link
+ * ai.djl.training.dataset.Record}) rather than a Batch. For example, the input parameter would then
+ * be {@code Image} rather than {@code Image[]}. The {@link ai.djl.training.dataset.Record}s will
+ * then be combined using a {@link Batchifier}. If it is easier in your use case to work with
+ * batches directly or your model uses records instead of batches, you can use the {@link
+ * NoBatchifyTranslator}.
+ *
+ * <p>The following is an example of processing an image and creating classification output:
  *
  * <pre>
  * private static final class MyTranslator implements Translator&lt;Image, Classification&gt; {
@@ -71,18 +79,66 @@ import java.io.IOException;
 public interface Translator<I, O> extends PreProcessor<I>, PostProcessor<O> {
 
     /**
-     * Gets the {@link Batchifier}.
+     * Returns the {@link Batchifier}.
      *
      * @return the {@link Batchifier}
      */
-    Batchifier getBatchifier();
+    default Batchifier getBatchifier() {
+        return Batchifier.STACK;
+    }
+
+    /**
+     * Batch processes the inputs and converts it to NDList.
+     *
+     * @param ctx the toolkit for creating the input NDArray
+     * @param inputs a list of the input object
+     * @return the {@link NDList} after pre-processing
+     * @throws Exception if an error occurs during processing input
+     */
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
+    default NDList batchProcessInput(TranslatorContext ctx, List<I> inputs) throws Exception {
+        NDList[] preprocessed = new NDList[inputs.size()];
+        int index = 0;
+        for (I input : inputs) {
+            preprocessed[index++] = processInput(ctx, input);
+        }
+        return getBatchifier().batchify(preprocessed);
+    }
+
+    /**
+     * Batch processes the output NDList to the corresponding output objects.
+     *
+     * @param ctx the toolkit used for post-processing
+     * @param list the output NDList after inference, usually immutable in engines like
+     *     PyTorch. @see <a href="https://github.com/deepjavalibrary/djl/issues/1774">Issue 1774</a>
+     * @return a list of the output object of expected type
+     * @throws Exception if an error occurs during processing output
+     */
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
+    default List<O> batchProcessOutput(TranslatorContext ctx, NDList list) throws Exception {
+        NDList[] unbatched = getBatchifier().unbatchify(list);
+        List<O> outputs = new ArrayList<>(unbatched.length);
+        for (NDList output : unbatched) {
+            outputs.add(processOutput(ctx, output));
+        }
+        return outputs;
+    }
 
     /**
      * Prepares the translator with the manager and model to use.
      *
-     * @param manager the manager for the translator
-     * @param model the model to translate for
-     * @throws IOException if there is an error reading inputs for preparing the translator
+     * @param ctx the context for the {@code Predictor}.
+     * @throws Exception if there is an error for preparing the translator
      */
-    default void prepare(NDManager manager, Model model) throws IOException {}
+    @SuppressWarnings("PMD.SignatureDeclareThrowsException")
+    default void prepare(TranslatorContext ctx) throws Exception {}
+
+    /**
+     * Returns possible {@link TranslatorOptions} that can be built using this {@link Translator}.
+     *
+     * @return possible options or null if not defined
+     */
+    default TranslatorOptions getExpansions() {
+        return null;
+    }
 }

@@ -5,14 +5,14 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-13
 
     steps:
       - name: Checkout Apache MXNet repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v5
         with:
           repository: apache/incubator-mxnet
-          ref: v1.7.x
+          ref: 1.9.1
           submodules: 'recursive'
       - name: Install Dependencies
         run: |
@@ -23,7 +23,7 @@ jobs:
           clang --version
           CMAKE_STATICBUILD=1 ./tools/staticbuild/build.sh cpu
       - name: Upload libmxnet.dylib
-        uses: actions/upload-artifact@v1
+        uses: actions/upload-artifact@v7
         with:
           name: libmxnet.dylib
           path: build/libmxnet.dylib

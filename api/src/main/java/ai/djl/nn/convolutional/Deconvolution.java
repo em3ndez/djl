@@ -23,6 +23,7 @@ import ai.djl.nn.Block;
 import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 
@@ -44,8 +45,6 @@ import java.io.IOException;
  */
 public abstract class Deconvolution extends AbstractBlock {
 
-    private static final byte VERSION = 1;
-
     protected Shape kernelShape;
     protected Shape stride;
     protected Shape padding;
@@ -63,8 +62,8 @@ public abstract class Deconvolution extends AbstractBlock {
      *
      * @param builder the {@code Builder} that has the necessary configurations
      */
+    @SuppressWarnings("this-escape")
     public Deconvolution(DeconvolutionBuilder<?> builder) {
-        super(VERSION);
         kernelShape = builder.kernelShape;
         stride = builder.stride;
         padding = builder.padding;
@@ -162,12 +161,12 @@ public abstract class Deconvolution extends AbstractBlock {
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
+    public void loadMetadata(byte loadVersion, DataInputStream is)
             throws IOException, MalformedModelException {
-        if (version == VERSION) {
+        if (loadVersion == version) {
             readInputShapes(is);
         } else {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
+            throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
     }
 
@@ -198,6 +197,7 @@ public abstract class Deconvolution extends AbstractBlock {
         return input.getNDArrayInternal()
                 .deconvolution(input, weight, bias, stride, padding, outPadding, dilation, groups);
     }
+
     /**
      * A builder that can build any {@code Deconvolution} block.
      *
@@ -247,6 +247,7 @@ public abstract class Deconvolution extends AbstractBlock {
             this.padding = padding;
             return self();
         }
+
         /**
          * Sets the out_padding along each dimension. Defaults to 0 along each dimension.
          *
@@ -257,6 +258,7 @@ public abstract class Deconvolution extends AbstractBlock {
             this.outPadding = outPadding;
             return self();
         }
+
         /**
          * Sets the dilation along each dimension. Defaults to 1 along each dimension.
          *

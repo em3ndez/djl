@@ -13,13 +13,14 @@
 package ai.djl.util.cuda;
 
 import ai.djl.Device;
-import java.lang.management.MemoryUsage;
-import java.util.Arrays;
-import java.util.List;
+import ai.djl.engine.EngineException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.lang.management.MemoryUsage;
 
 public class CudaUtilsTest {
 
@@ -28,23 +29,36 @@ public class CudaUtilsTest {
     @Test
     public void testCudaUtils() {
         if (!CudaUtils.hasCuda()) {
-            return;
-        }
-        // Possible to have CUDA and not have a GPU.
-        if (CudaUtils.getGpuCount() == 0) {
+            try {
+                CudaUtils.getCudaVersionString();
+            } catch (IllegalStateException | IllegalArgumentException | EngineException ignore) {
+                // ignore exception
+            }
+            Assert.assertThrows(() -> CudaUtils.getComputeCapability(0));
+            Assert.assertThrows(() -> CudaUtils.getGpuMemory(Device.gpu()));
             return;
         }
 
-        int cudaVersion = CudaUtils.getCudaVersion();
+        String cudaVersion = CudaUtils.getCudaVersionString();
         String smVersion = CudaUtils.getComputeCapability(0);
         MemoryUsage memoryUsage = CudaUtils.getGpuMemory(Device.gpu());
 
         logger.info("CUDA runtime version: {}, sm: {}", cudaVersion, smVersion);
         logger.info("Memory usage: {}", memoryUsage);
 
-        Assert.assertTrue(cudaVersion >= 9020, "cuda 9.2+ required.");
+        Assert.assertNotNull(cudaVersion);
+        Assert.assertNotNull(smVersion);
+    }
 
-        List<String> supportedSm = Arrays.asList("37", "52", "60", "61", "70", "75");
-        Assert.assertTrue(supportedSm.contains(smVersion), "Unsupported cuda sm: " + smVersion);
+    @Test
+    public void testCudaUtilsWithFork() {
+        System.setProperty("ai.djl.util.cuda.fork", "true");
+        try {
+            testCudaUtils();
+            CudaUtils.main(new String[0]);
+            CudaUtils.main(new String[] {"-1"});
+        } finally {
+            System.clearProperty("ai.djl.util.cuda.fork");
+        }
     }
 }

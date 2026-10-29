@@ -16,6 +16,7 @@ import ai.djl.ndarray.NDList;
 import ai.djl.nn.LambdaBlock;
 import ai.djl.nn.SequentialBlock;
 import ai.djl.nn.core.Linear;
+
 import java.util.List;
 import java.util.function.Function;
 
@@ -30,6 +31,7 @@ public class PointwiseFeedForwardBlock extends SequentialBlock {
      * @param activationFunction the activation function to use for the hidden layers (not applied
      *     to output)
      */
+    @SuppressWarnings("this-escape")
     public PointwiseFeedForwardBlock(
             List<Integer> hiddenSizes,
             int outputSize,

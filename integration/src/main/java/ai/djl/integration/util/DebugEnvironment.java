@@ -13,6 +13,7 @@
 package ai.djl.integration.util;
 
 import ai.djl.engine.Engine;
+
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -72,7 +73,8 @@ public final class DebugEnvironment {
 
         if (!TestUtils.isWindows()) {
             System.out.println("GCC: ");
-            Process process = rt.exec("gcc --version");
+            String[] cmd = {"gcc", "--version"};
+            Process process = rt.exec(cmd);
             try (Scanner gccOut =
                     new Scanner(process.getInputStream(), StandardCharsets.UTF_8.name())) {
                 gccOut.useDelimiter(System.lineSeparator());

@@ -23,6 +23,7 @@ import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
 import ai.djl.util.Preconditions;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -34,10 +35,19 @@ import java.util.Collections;
  * <p>It has the following shapes:
  *
  * <ul>
- *   <li>input X: [x1, x2, …, xn, input_dim]
+ *   <li>input X: [x1, x2, ..., xn, input_dim]
  *   <li>weight W: [units, input_dim]
  *   <li>Bias b: [units]
- *   <li>output Y: [x1, x2, …, xn, units]
+ *   <li>output Y: [x1, x2, ..., xn, units]
+ * </ul>
+ *
+ * <p>It is most typically used with a simple batched 1D input. In that case, the shape would be:
+ *
+ * <ul>
+ *   <li>input X: [batch_num, input_dim]
+ *   <li>weight W: [units, input_dim]
+ *   <li>Bias b: [units]
+ *   <li>output Y: [batch_num, units]
  * </ul>
  *
  * <p>The Linear block should be constructed using {@link Linear.Builder}.
@@ -48,13 +58,12 @@ public class Linear extends AbstractBlock {
 
     private long units;
     private long inputFeatures;
-
     private Shape inputShape;
-
     private Parameter weight;
     private Parameter bias;
 
-    Linear(Builder builder) {
+    @SuppressWarnings("this-escape")
+    protected Linear(Builder builder) {
         super(VERSION);
         units = builder.units;
         weight =
@@ -130,29 +139,34 @@ public class Linear extends AbstractBlock {
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
+    public void loadMetadata(byte loadVersion, DataInputStream is)
             throws IOException, MalformedModelException {
-        if (version < 1 || version > VERSION) {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
-        }
-        if (version == VERSION) {
-            units = is.readLong();
-            inputFeatures = is.readLong();
-        } else if (version == 2) {
-            if (is.readBoolean()) {
-                throw new IllegalArgumentException("flatten is not supported!");
-            }
-            inputFeatures = is.readLong();
-        } else if (version == 3) {
-            units = is.readLong();
-            if (is.readBoolean()) {
-                throw new IllegalArgumentException("flatten is not supported!");
-            }
-            inputFeatures = is.readLong();
-        } else {
-            inputFeatures = Shape.decode(is).size();
+        switch (loadVersion) {
+            case VERSION:
+                units = is.readLong();
+                inputFeatures = is.readLong();
+                break;
+            case 3:
+                units = is.readLong();
+                if (is.readBoolean()) {
+                    throw new IllegalArgumentException("flatten is not supported!");
+                }
+                inputFeatures = is.readLong();
+                break;
+            case 2:
+                if (is.readBoolean()) {
+                    throw new IllegalArgumentException("flatten is not supported!");
+                }
+                inputFeatures = is.readLong();
+                break;
+            case 1:
+                inputFeatures = Shape.decode(is).size();
+                break;
+            default:
+                throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
         inputShape = Shape.decode(is);
+        inputShapes = new Shape[] {inputShape};
     }
 
     /**
@@ -188,12 +202,12 @@ public class Linear extends AbstractBlock {
     }
 
     /** The Builder to construct a {@link Linear} type of {@link Block}. */
-    public static final class Builder {
+    public static class Builder {
 
-        private long units;
+        protected long units;
         private boolean bias = true;
 
-        Builder() {}
+        protected Builder() {}
 
         /**
          * Sets the number of output channels.

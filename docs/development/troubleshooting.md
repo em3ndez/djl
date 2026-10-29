@@ -3,7 +3,7 @@ The following are common problems you may face when using or developing DJL.
 	
 Please review this list before submitting an issue.
 
-## 1. `No deep learning engine found` exception.
+## `No deep learning engine found` exception.
 These could be due to several reasons.
 
 ```
@@ -15,44 +15,13 @@ ai.djl.engine.EngineException: No deep learning engine found.
 	at ai.djl.examples.training.TrainPikachu.main(TrainPikachu.java:72) [main/:?]
 ```
 
-For Windows 10 specifically, DJL many fail due to missing [Visual C++ 2019 Redistributable Packages](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads).
-You can install this package and reboot again to see if the issue persist. You can also check the below instruction to do further investigation.
+### Package your application with a fatjar
+This is a common error when you package your application in a fat jar. See discussion in:
+[issue #940](https://github.com/deepjavalibrary/djl/issues/940).
 
-CN: Windows 10 加载失败常常是因为缺少 Windows Visual C++ 相关扩展包而导致的。您可以通过下面Windows的步骤来修复系统缺失依赖项。
+We provided an [example project](https://github.com/deepjavalibrary/djl-demo/tree/master/development/fatjar) to show you how to distribute your application.
 
-### 1.1 Engine dependency is missing
-DJL currently supports four engines: MXNet, PyTorch, TensorFlow and FastText.
-Please include at least one of those engines and their native library as dependencies.
-For example, adding MXNet engine dependencies:
-
-Gradle:
-
-```
-implementation "ai.djl.mxnet:mxnet-engine:0.10.0"
-// See https://github.com/deepjavalibrary/djl/blob/master/mxnet/mxnet-engine/README.md for more MXNet library selection options
-runtimeOnly "ai.djl.mxnet:mxnet-native-auto:1.7.0-backport"
-```
-
-Maven:
-
-```
-<dependency>
-    <groupId>ai.djl.mxnet</groupId>
-    <artifactId>mxnet-engine</artifactId>
-    <version>{version}</version>
-</dependency>
-<dependency>
-    <!--
-        See https://github.com/deepjavalibrary/djl/blob/master/mxnet/mxnet-engine/README.md for more MXNet library selection options
-    -->
-    <groupId>ai.djl.mxnet</groupId>
-    <artifactId>mxnet-native-auto</artifactId>
-    <version>{mxnet.version}</version>
-    <scope>runtime</scope>
-</dependency>
-```
-
-### 1.2 Intellij Issue
+### Intellij Issue
 The error may appear after running the `./gradlew clean` command:
 This issue is caused by a mismatch between IntelliJ and the Gradle runner.
 To fix this, navigate to: `Preferences-> Build Execution Deployment -> Build Tools -> Gradle`. Then, change the `Build and running using:` option to `Gradle`.
@@ -67,7 +36,16 @@ Then, right click the resources folder and select `Rebuild<default>`.
 
 ![FAQ1](https://resources.djl.ai/images/FAQ_engine_not_found.png)
 
-### 1.3 UnsatisfiedLinkError issue
+## UnsatisfiedLinkError issue
+If a dependency is missing, it throws an `UnsatisfiedLinkError` exception. If you have encountered one, please create an issue at `https://github.com/deepjavalibrary/djl`.
+
+### Causes on Linux / MacOs
+```
+Caused by: java.lang.UnsatisfiedLinkError: /home/ubuntu/.tensorflow/cache/2.3.1-cu101-linux-x86_64/libjni$
+ensorflow.so: /usr/lib/x86_64-linux-gnu/libstdc++.so.6: version `CXXABI_1.3.11' not found (required by /home/ubuntu/.te
+nsorflow/cache/2.3.1-cu101-linux-x86_64/libtensorflow.so.2)
+```
+
 You might see the error when DJL tries to load the native library for the engines, but some shared libraries are missing.
 Let's take the PyTorch engine as an example.
 DJL loads libtorch.dylib when creating the Engine instance.
@@ -83,45 +61,60 @@ libtorch.dylib:
 	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 400.9.0)
 ```
 
-It shows the `libtorch.dylib` depends on `libiomp5.dylib` and `libc10.dylib`. If one of them is missing, it throws an `UnsatisfiedLinkError` exception.
-If you are using `ai.djl.{engine}:{engine}-native-auto`, please create an issue at `https://github.com/deepjavalibrary/djl`.
+It shows the `libtorch.dylib` depends on `libiomp5.dylib` and `libc10.dylib`.
 
-**Windows**
+### Causes on Windows
 
+For Windows specifically, DJL many fail due to
+
+1. Pytorch CUDA library paths are not added to PATH in the Windows system environment variables. Usually caused by having multiple CUDAs installed on your system.
+2. missing [Visual C++ 2019 Redistributable Packages](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads).
+   You can install this package and reboot again to see if the issue persist.
+
+   CN: Windows 10 加载失败常常是因为缺少 Windows Visual C++ 相关扩展包而导致的。您可以通过下面Windows的步骤来修复系统缺失依赖项。
+
+### Causes on any Operating System:
+
+   1. **Failed to extract native file issue**  
+      Sometimes you may only have read-only access on the machine.
+      It will cause a failure during engine loading because the cache attempts to write to the home directory.
+      For more information, please refer to [DJL Cache Management](cache_management.md).
+
+   2. **Package version mismatch**  
+   It happened when you had a wrong version with DJL and Deep Engines. 
+   You can check the combination [here](dependency_management.md) and use DJL BOM to solve the issue.
+
+### Solutions:
+
+1. **Visual C++ Redistributable Packages**  
+DJL requires Visual C++ Redistributable Packages. If you encounter an UnsatisfiedLinkError while building DJL on Windows, please download and install [Visual C++ 2019 Redistributable Packages](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads) and reboot.  
+
+   CN: 如果您在中国，可以使用 [DirectX 修复工具](https://blog.csdn.net/VBcom/article/details/6962388) 来安装遗失依赖项。
+
+3. **Add environment variables**.  
+The Pytorch CUDA library paths (C:\Users\USER\.djl.ai\pytorch\CUDA-VERSION) can be manually added to PATH in the Windows system environment variables by copying the folder path (search for "variable" or open Control Panel -> System -> Advanced System Settings. Click on Environment Variables. Under System variables, select Path and click Edit.). See also [how to edit environment variables on Windows 10 or 11](https://www.howtogeek.com/787217/how-to-edit-environment-variables-on-windows-10-or-11/).
+
+### Advanced Dependencies Handling:
+
+#### Visual Studio Tools CMD:
 You can run the following if you have Visual Studio tools CMD:
 
 ```cmd
 dumpbin /dependents your_dll_file.dll
 ```
 
-or install a [Dependency Walker](http://www.dependencywalker.com/).
-It's an application that can check the dependencies for a specific DLL by simply
-drag and drop.
+#### Dependency Walker
+Install a Dependency Walker. For example [Dependency Walker](http://www.dependencywalker.com/) or [a more recent fork](https://github.com/lhak/Dependencies) of it.
+It's an application that can check the dependencies for a specific DLL by simply drag and drop.
 
-DJL requires Visual C++ Redistributable Packages. If you encounter an UnsatisfiedLinkError while building
-DJL on Windows, please download and install
-[Visual C++ 2019 Redistributable Packages](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads) and reboot. 
-
-CN: 如果您在中国，可以使用 [DirectX 修复工具](https://blog.csdn.net/VBcom/article/details/6962388) 来安装遗失依赖项。
-
-If the issue continues to persist, you can use the [docker file](https://github.com/deepjavalibrary/djl/blob/master/docker/windows/Dockerfile) provided by us.
+### If nothing else helps
+If the issue continues to persist, check you can use the [docker file](https://github.com/deepjavalibrary/djl/blob/master/docker/windows/Dockerfile) provided by us.
 Please note that this docker will only work with Windows server 2019 by default. If you want it to work with other
 versions of Windows, you need to pass the version as an argument as follows:
 
-```
+```bash
 docker build --build-arg version=<YOUR_VERSION>
 ```
-
-### 1.4 Failed to extract native file issue
-Sometimes you may only have read-only access on the machine.
-It will cause a failure during engine loading because the cache attempts to write to the home directory.
-For more information, please refer to [DJL Cache Management](cache_management.md).
-
-
-### 1.5 Package version mismatch
-
-It happened when you had a wrong version with DJL and Deep Engines. 
-You can check the combination [here](dependency_management.md) and use DJL BOM to solve the issue.
 
 ## 2. IntelliJ throws the `No Log4j 2 configuration file found.` exception.
 The following exception may appear after running the `./gradlew clean` command:
@@ -145,10 +138,11 @@ Then, right click the `log4j2.xml` file and select `Recompile log4j2.xml`.
 
 
 ## 4. How to run DJL using other versions of Apache MXNet?
+
 **Note:** this is not officially supported by DJL, and some functions may not work. 
 If you require features in Apache MXNet not provided by DJL, please submit an [issue](https://github.com/deepjavalibrary/djl/issues).
 
-By default, DJL is running on the [MXNet engine](https://github.com/deepjavalibrary/djl/tree/master/mxnet/mxnet-engine).
+By default, DJL is running on the [MXNet engine](https://github.com/deepjavalibrary/djl/tree/master/engines/mxnet/mxnet-engine).
 We use `mxnet-mkl` on CPU machines and `mxnet-cu102mkl` on GPU machines.
 `mkl` means [Intel-MKLDNN](https://github.com/intel/mkl-dnn) is enabled.
 `cu102` means [Nvidia CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) version 10.2 is enabled.
@@ -207,52 +201,42 @@ If that happens, the following can help: Go to `File > Settings > Build, Executi
   
 ## 7. Running an integration test hangs for a long time
 Often, the test itself does not actually hang. To run the integration tests, the `integration` subproject 
-has a `-SNAPSHOT` dependency on the mxnet native binaries, `ai.djl.mxnet:mxnet-native-auto`. As it 
-is a snapshot depency, it is updated by the build system regularly. If your integration tests hang, 
+has a `-SNAPSHOT` dependency on the PyTorch native binaries. As it 
+is a snapshot dependency, it is updated by the build system regularly. If your integration tests hang, 
 it is most likely just the automatic binary dependency being updated. As the total size is roughly
-1.7GB the download may take a while. Once this download is over, all further tests will run instantly.
+1.7GB (on GPU machine) the download may take a while. Once this download is over, all further tests will run instantly.
 
-## 8. `UnsatisfiedLinkError` when running TensorFlow Engine 2.3.1
-If you are using TensorFlow 2.3.1 engine with GPU and encountered the following error:
+## 8. `UnsatisfiedLinkError` when running with old version of libstdc++.so
+If you encountered the following error:
+
 ```bash
-Caused by: java.lang.UnsatisfiedLinkError: /home/ubuntu/.tensorflow/cache/2.3.1-SNAPSHOT-cu101-linux-x86_64/libjni$
+Caused by: java.lang.UnsatisfiedLinkError: /home/ubuntu/.tensorflow/cache/2.3.1-cu101-linux-x86_64/libjni$
 ensorflow.so: /usr/lib/x86_64-linux-gnu/libstdc++.so.6: version `CXXABI_1.3.11' not found (required by /home/ubuntu/.te
-nsorflow/cache/2.3.0-SNAPSHOT-cu101-linux-x86_64/libtensorflow.so.2)
+nsorflow/cache/2.3.1-cu101-linux-x86_64/libtensorflow.so.2)
 ```
 
-Please upgrade gcc version according to the steps on [TensorFlow install page](https://docs.djl.ai/tensorflow/index.html#note)
+Please upgrade gcc version according to the steps on [TensorFlow install page](https://docs.djl.ai/master/engines/tensorflow/index.html#note)
 
 ## 9. X11 error when running object detection notebooks on EC2 instances.
 
-When you run object detection using Jupyter Notebooks on EC2 instances via SSH, sometimes you may face X11 error when drawing bounding boxes. 
+When you run object detection using Jupyter Notebooks on EC2 instances via SSH, sometimes you may face X11 error when drawing bounding boxes.
+
 ```bash
 java.awt.HeadlessException:
 No X11 DISPLAY variable was set, but this program performed an operation which requires it.
 java.awt.HeadlessException:
 ```
 
-Follow the [steps here](https://github.com/aws-samples/d2l-java/blob/master/documentation/troubleshoot.md) to resolve it.
+Follow the [steps here](https://github.com/deepjavalibrary/d2l-java/blob/master/documentation/troubleshoot.md) to resolve it.
 
 
 ## 10. JVM crash
 
 It is very unfortunate to have issue since the error logging is not very clear.
 There are many causes that can trigger this issue. If you have issues debugging,
-please file us an issue on GitHub or on Slack and we can check with you. Here is a summary on the issues we have dealt before.
-
-### 1. Java heap memory not sufficient
+please file us an issue on GitHub or on Slack and we can check with you.
 
 Sometimes the OOM issue will trigger the `Core Dump` error message.
 It can be the heap memory overflow and cause a chain of failure from native memory to Java.
 Try to increase the `xmx` may help to reduce this issue,
 you can also try to monitor the heap memory cost to identify if this is the root cause.
-
-### 2. Illegal memory access
-
-This issue is fairly common in the Multithreaded Inference/Training cases and will trigger the `segfault` or `Core Dump` error message.
-The Java GC has kicked in and release some of the pointers beforehand. Generally, you may need to disable the GC happened in this case
-and relying on DJL's `NDManager` to efficiently GC the memory. You can do that by adding flag
-
-```
--Dai.djl.disable_close_resource_on_finalize=true
-```

@@ -35,10 +35,12 @@ import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Adam;
 import ai.djl.training.tracker.LinearTracker;
 import ai.djl.training.tracker.Tracker;
-import java.io.IOException;
-import java.nio.file.Paths;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.file.Paths;
 
 /**
  * An example of training reinforcement learning using {@link TicTacToe} and a {@link QAgent}.
@@ -62,6 +64,7 @@ public final class TrainTicTacToe {
             return null;
         }
 
+        String engine = arguments.getEngine();
         int epoch = arguments.getEpoch();
         int batchSize = arguments.getBatchSize();
         int replayBufferSize = 1024;
@@ -74,14 +77,15 @@ public final class TrainTicTacToe {
             gamesPerEpoch = Math.toIntExact(arguments.getLimit());
         }
 
-        TicTacToe game = new TicTacToe(NDManager.newBaseManager(), batchSize, replayBufferSize);
+        TicTacToe game =
+                new TicTacToe(NDManager.newBaseManager(engine), batchSize, replayBufferSize);
 
         Block block = getBlock();
 
-        try (Model model = Model.newInstance("tic-tac-toe")) {
+        try (Model model = Model.newInstance("tic-tac-toe", engine)) {
             model.setBlock(block);
 
-            DefaultTrainingConfig config = setupTrainingConfig();
+            DefaultTrainingConfig config = setupTrainingConfig(arguments);
             try (Trainer trainer = model.newTrainer(config)) {
                 trainer.initialize(
                         new Shape(batchSize, 9), new Shape(batchSize), new Shape(batchSize));
@@ -160,9 +164,10 @@ public final class TrainTicTacToe {
                 .add(new Mlp(11, 1, new int[] {20, 10}));
     }
 
-    public static DefaultTrainingConfig setupTrainingConfig() {
+    public static DefaultTrainingConfig setupTrainingConfig(Arguments arguments) {
         return new DefaultTrainingConfig(Loss.l2Loss())
                 .addTrainingListeners(TrainingListener.Defaults.basic())
+                .optDevices(arguments.getMaxGpus())
                 .optOptimizer(
                         Adam.builder().optLearningRateTracker(Tracker.fixed(0.0001F)).build());
     }

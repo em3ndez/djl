@@ -15,6 +15,7 @@ package ai.djl.ndarray.types;
 import ai.djl.ndarray.NDArray;
 import ai.djl.util.Pair;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -22,6 +23,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -138,6 +141,15 @@ public class Shape {
     }
 
     /**
+     * Returns the last index.
+     *
+     * @return the last index
+     */
+    public long getLastDimension() {
+        return shape[shape.length - 1];
+    }
+
+    /**
      * Returns the layout type in the given dimension.
      *
      * @param dimension the dimension to get the layout type in
@@ -153,6 +165,7 @@ public class Shape {
      * @param dimensions the dimension or dimensions to find the size of
      * @return the size of specific dimension(s) or -1 for indeterminate size
      * @throws IllegalArgumentException thrown if passed an invalid dimension
+     * @throws ArithmeticException thrown if the size overflows a long
      */
     public long size(int... dimensions) {
         long total = 1;
@@ -163,7 +176,7 @@ public class Shape {
             if (shape[Math.toIntExact(d)] == -1) {
                 return -1;
             }
-            total *= shape[Math.toIntExact(d)];
+            total = Math.multiplyExact(total, shape[Math.toIntExact(d)]);
         }
         return total;
     }
@@ -172,6 +185,7 @@ public class Shape {
      * Returns the total size.
      *
      * @return the total size or -1 for indeterminate size
+     * @throws ArithmeticException thrown if the total size overflows a long
      */
     public long size() {
         long total = 1;
@@ -179,7 +193,7 @@ public class Shape {
             if (v == -1) {
                 return -1;
             }
-            total *= v;
+            total = Math.multiplyExact(total, v);
         }
         return total;
     }
@@ -226,6 +240,9 @@ public class Shape {
      * @return a new {@code Shape} whose content is a slice of this shape
      */
     public Shape slice(int beginIndex, int endIndex) {
+        beginIndex = beginIndex + (beginIndex < 0 ? shape.length : 0);
+        endIndex = endIndex + (endIndex < 0 ? shape.length : 0);
+
         int size = endIndex - beginIndex;
         long[] out = new long[size];
         System.arraycopy(shape, beginIndex, out, 0, size);
@@ -475,5 +492,112 @@ public class Shape {
             layout[i] = dis.readChar();
         }
         return new Shape(shapeValue, new String(layout));
+    }
+
+    /**
+     * Decodes the data in the given {@link ByteBuffer} and converts it into the corresponding
+     * {@link Shape} object.
+     *
+     * @param bb the ByteBuffer to read from
+     * @return the corresponding {@link Shape} object
+     */
+    public static Shape decode(ByteBuffer bb) {
+        // Shape
+        int length = bb.getInt();
+        long[] shapeValue = new long[length];
+        for (int i = 0; i < length; ++i) {
+            shapeValue[i] = bb.getLong();
+        }
+
+        // Layout
+        length = bb.getInt();
+        char[] layout = new char[length];
+        for (int i = 0; i < length; ++i) {
+            layout[i] = bb.getChar();
+        }
+        return new Shape(shapeValue, new String(layout));
+    }
+
+    /**
+     * Returns if the array is rank-1 which is inferred from the shape.
+     *
+     * <p>For example, an array with shape [1, 10, 1] returns true. Array with indeterminate size -1
+     * returns false.
+     *
+     * @return if the array is rank-1
+     */
+    public boolean isRankOne() {
+        int max = 1;
+        int ans = 1;
+        for (long s : shape) {
+            int size = Math.toIntExact(s);
+            max = Math.max(max, size);
+            ans *= size;
+            if (ans < 0) {
+                return false;
+            }
+        }
+        return max == ans;
+    }
+
+    /**
+     * Parses a string representation of shapes for NDList.
+     *
+     * @param value a string representation of shapes for NDList
+     * @return a list of Shape and datatype pairs
+     */
+    public static PairList<DataType, Shape> parseShapes(String value) {
+        PairList<DataType, Shape> inputShapes = new PairList<>();
+        if (value != null) {
+            if (value.contains("(")) {
+                Pattern pattern =
+                        Pattern.compile("\\((\\s*([-\\d]+)([,\\s]+[-\\d]+)*\\s*)\\)(\\w?)");
+                Matcher matcher = pattern.matcher(value);
+                while (matcher.find()) {
+                    String[] tokens = matcher.group(1).split(",");
+                    long[] array = Arrays.stream(tokens).mapToLong(Long::parseLong).toArray();
+                    DataType dataType;
+                    String dataTypeStr = matcher.group(4);
+                    if (dataTypeStr == null || dataTypeStr.isEmpty()) {
+                        dataType = DataType.FLOAT32;
+                    } else {
+                        switch (dataTypeStr) {
+                            case "s":
+                                dataType = DataType.FLOAT16;
+                                break;
+                            case "d":
+                                dataType = DataType.FLOAT64;
+                                break;
+                            case "u":
+                                dataType = DataType.UINT8;
+                                break;
+                            case "b":
+                                dataType = DataType.INT8;
+                                break;
+                            case "i":
+                                dataType = DataType.INT32;
+                                break;
+                            case "l":
+                                dataType = DataType.INT64;
+                                break;
+                            case "B":
+                                dataType = DataType.BOOLEAN;
+                                break;
+                            case "f":
+                                dataType = DataType.FLOAT32;
+                                break;
+                            default:
+                                throw new IllegalArgumentException("Invalid input-shape: " + value);
+                        }
+                    }
+                    inputShapes.add(dataType, new Shape(array));
+                }
+            } else {
+                String[] tokens = value.split(",");
+                long[] shapes = Arrays.stream(tokens).mapToLong(Long::parseLong).toArray();
+                inputShapes.add(DataType.FLOAT32, new Shape(shapes));
+            }
+        }
+        return inputShapes;
     }
 }

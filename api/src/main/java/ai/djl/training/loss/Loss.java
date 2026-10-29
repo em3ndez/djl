@@ -14,6 +14,7 @@ package ai.djl.training.loss;
 
 import ai.djl.ndarray.NDList;
 import ai.djl.training.evaluator.Evaluator;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -68,7 +69,7 @@ public abstract class Loss extends Evaluator {
     }
 
     /**
-     * Returns a new instance of {@link L1Loss} with given weight and batch axis.
+     * Returns a new instance of {@link L1Loss} with given weight.
      *
      * @param name the name of the loss
      * @param weight the weight to apply on loss value, default 1
@@ -76,6 +77,27 @@ public abstract class Loss extends Evaluator {
      */
     public static L1Loss l1Loss(String name, float weight) {
         return new L1Loss(name, weight);
+    }
+
+    /**
+     * Returns a new instance of {@link QuantileL1Loss} with given quantile.
+     *
+     * @param quantile the quantile position of the data to focus on
+     * @return a new instance of {@link QuantileL1Loss}
+     */
+    public static QuantileL1Loss quantileL1Loss(float quantile) {
+        return new QuantileL1Loss(quantile);
+    }
+
+    /**
+     * Returns a new instance of {@link QuantileL1Loss} with given quantile.
+     *
+     * @param name the name of the loss
+     * @param quantile the quantile position of the data to focus on
+     * @return a new instance of {@link QuantileL1Loss}
+     */
+    public static QuantileL1Loss quantileL1Loss(String name, float quantile) {
+        return new QuantileL1Loss(name, quantile);
     }
 
     /**
@@ -363,10 +385,18 @@ public abstract class Loss extends Evaluator {
     /** {@inheritDoc} */
     @Override
     public void updateAccumulator(String key, NDList labels, NDList predictions) {
+        updateAccumulators(new String[] {key}, labels, predictions);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void updateAccumulators(String[] keys, NDList labels, NDList predictions) {
         // this is a synchronized operation, only call it at end of batch or epoch
         float update = evaluate(labels, predictions).sum().getFloat();
-        totalInstances.compute(key, (k, v) -> v + 1);
-        totalLoss.compute(key, (k, v) -> v + update);
+        for (String key : keys) {
+            totalInstances.compute(key, (k, v) -> v + 1);
+            totalLoss.compute(key, (k, v) -> v + update);
+        }
     }
 
     /** {@inheritDoc} */

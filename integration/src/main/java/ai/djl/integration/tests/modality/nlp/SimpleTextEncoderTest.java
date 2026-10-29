@@ -14,7 +14,7 @@ package ai.djl.integration.tests.modality.nlp;
 
 import ai.djl.basicmodelzoo.nlp.SimpleTextEncoder;
 import ai.djl.integration.util.TestUtils;
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.DefaultVocabulary;
 import ai.djl.modality.nlp.embedding.TrainableTextEmbedding;
 import ai.djl.modality.nlp.embedding.TrainableWordEmbedding;
 import ai.djl.ndarray.NDList;
@@ -23,9 +23,11 @@ import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.recurrent.LSTM;
 import ai.djl.training.ParameterStore;
-import java.util.Arrays;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.util.Arrays;
 
 public class SimpleTextEncoderTest {
 
@@ -36,7 +38,7 @@ public class SimpleTextEncoderTest {
                         TrainableWordEmbedding.builder()
                                 .setEmbeddingSize(8)
                                 .setVocabulary(
-                                        new SimpleVocabulary(
+                                        new DefaultVocabulary(
                                                 Arrays.asList("1 2 3 4 5 6 7 8 9 10".split(" "))))
                                 .build());
         SimpleTextEncoder encoder =
@@ -48,7 +50,7 @@ public class SimpleTextEncoderTest {
                                 .optBatchFirst(true)
                                 .optReturnState(true)
                                 .build());
-        try (NDManager manager = NDManager.newBaseManager(TestUtils.getDevices()[0])) {
+        try (NDManager manager = NDManager.newBaseManager(TestUtils.getDevices(1)[0])) {
             encoder.initialize(manager, DataType.FLOAT32, new Shape(4, 7));
             NDList output =
                     encoder.forward(

@@ -20,19 +20,18 @@ import ai.djl.nn.AbstractBlock;
 import ai.djl.nn.core.Linear;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.util.Collections;
 
 /** Block to perform the Bert next-sentence-prediction task. */
 public class BertNextSentenceBlock extends AbstractBlock {
 
-    private static final byte VERSION = 1;
-
     private Linear binaryClassifier;
 
     /** Creates a next sentence block. */
+    @SuppressWarnings("this-escape")
     public BertNextSentenceBlock() {
-        super(VERSION);
-        this.binaryClassifier =
+        binaryClassifier =
                 addChildBlock(
                         "binaryClassifier", Linear.builder().setUnits(2).optBias(true).build());
     }

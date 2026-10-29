@@ -19,6 +19,7 @@ import ai.djl.modality.rl.env.RlEnv;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+
 import java.util.Arrays;
 
 /** A simple {@link RlEnv} for playing TicTacToe. */
@@ -233,7 +234,7 @@ public class TicTacToe implements RlEnv {
         /** {@inheritDoc} */
         @Override
         public String toString() {
-            StringBuilder s = new StringBuilder();
+            StringBuilder s = new StringBuilder(64);
             for (int row = 0; row < 3; row++) {
                 for (int col = 0; col < 3; col++) {
                     int ind = 3 * row + col;

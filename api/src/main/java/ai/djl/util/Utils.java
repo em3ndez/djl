@@ -14,27 +14,51 @@ package ai.djl.util;
 
 import ai.djl.ndarray.NDArray;
 import ai.djl.nn.Parameter;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.JarURLConnection;
+import java.net.URL;
+import java.net.URLConnection;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
+import java.util.stream.Stream;
 
 /** A class containing utility methods. */
 public final class Utils {
+
+    private static final Logger logger = LoggerFactory.getLogger(Utils.class);
+
+    private static final int MAX_REDIRECTS = 5;
+
+    private static final int CONNECT_TIMEOUT_MILLIS = 10_000;
+
+    public static final String[] EMPTY_ARRAY = new String[0];
 
     private Utils() {}
 
@@ -91,19 +115,18 @@ public final class Utils {
      * @param dir the directory to be removed
      */
     public static void deleteQuietly(Path dir) {
-        try {
-            Files.walk(dir)
-                    .sorted(Comparator.reverseOrder())
-                    .forEach(
-                            path -> {
-                                try {
-                                    Files.deleteIfExists(path);
-                                } catch (IOException ignore) {
-                                    // ignore
-                                }
-                            });
+        List<Path> list;
+        try (Stream<Path> stream = Files.walk(dir)) {
+            list = stream.sorted(Comparator.reverseOrder()).collect(Collectors.toList());
         } catch (IOException ignore) {
-            // ignore
+            return;
+        }
+        for (Path path : list) {
+            try {
+                Files.deleteIfExists(path);
+            } catch (IOException ignore) {
+                // ignore
+            }
         }
     }
 
@@ -176,7 +199,7 @@ public final class Utils {
         if (Files.notExists(file)) {
             return Collections.emptyList();
         }
-        try (InputStream is = Files.newInputStream(file)) {
+        try (InputStream is = new BufferedInputStream(Files.newInputStream(file))) {
             return readLines(is, trim);
         }
     }
@@ -241,23 +264,24 @@ public final class Utils {
      */
     public static int getCurrentEpoch(Path modelDir, String modelName) throws IOException {
         final Pattern pattern = Pattern.compile(Pattern.quote(modelName) + "-(\\d{4}).params");
-        List<Integer> checkpoints =
-                Files.walk(modelDir, 1)
-                        .map(
-                                p -> {
-                                    Matcher m = pattern.matcher(p.toFile().getName());
-                                    if (m.matches()) {
-                                        return Integer.parseInt(m.group(1));
-                                    }
-                                    return null;
-                                })
-                        .filter(Objects::nonNull)
-                        .sorted()
-                        .collect(Collectors.toList());
-        if (checkpoints.isEmpty()) {
-            return -1;
+        try (Stream<Path> stream = Files.walk(modelDir, 1, FileVisitOption.FOLLOW_LINKS)) {
+            List<Integer> checkpoints =
+                    stream.map(
+                                    p -> {
+                                        Matcher m = pattern.matcher(p.toFile().getName());
+                                        if (m.matches()) {
+                                            return Integer.parseInt(m.group(1));
+                                        }
+                                        return null;
+                                    })
+                            .filter(Objects::nonNull)
+                            .sorted()
+                            .collect(Collectors.toList());
+            if (checkpoints.isEmpty()) {
+                return -1;
+            }
+            return checkpoints.get(checkpoints.size() - 1);
         }
-        return checkpoints.get(checkpoints.size() - 1);
     }
 
     /**
@@ -320,12 +344,9 @@ public final class Utils {
      * @return DJL engine cache directory
      */
     public static Path getEngineCacheDir() {
-        String cacheDir = System.getProperty("ENGINE_CACHE_DIR");
+        String cacheDir = getEnvOrSystemProperty("ENGINE_CACHE_DIR");
         if (cacheDir == null || cacheDir.isEmpty()) {
-            cacheDir = System.getenv("ENGINE_CACHE_DIR");
-            if (cacheDir == null || cacheDir.isEmpty()) {
-                return getCacheDir();
-            }
+            return getCacheDir();
         }
         return Paths.get(cacheDir);
     }
@@ -336,17 +357,643 @@ public final class Utils {
      * @return DJL cache directory
      */
     public static Path getCacheDir() {
-        String cacheDir = System.getProperty("DJL_CACHE_DIR");
+        String cacheDir = getEnvOrSystemProperty("DJL_CACHE_DIR");
         if (cacheDir == null || cacheDir.isEmpty()) {
-            cacheDir = System.getenv("DJL_CACHE_DIR");
-            if (cacheDir == null || cacheDir.isEmpty()) {
-                Path dir = Paths.get(System.getProperty("user.home"));
-                if (!Files.isWritable(dir)) {
-                    dir = Paths.get(System.getProperty("java.io.tmpdir"));
-                }
-                return dir.resolve(".djl.ai");
+            Path dir = Paths.get(System.getProperty("user.home"));
+            if (!Files.isWritable(dir)) {
+                dir = Paths.get(System.getProperty("java.io.tmpdir"));
             }
+            return dir.resolve(".djl.ai");
         }
         return Paths.get(cacheDir);
+    }
+
+    /**
+     * Returns if offline mode is enabled.
+     *
+     * @return true if offline mode is enabled
+     */
+    public static boolean isOfflineMode() {
+        String mode = getenv("DJL_OFFLINE", System.getProperty("ai.djl.offline"));
+        if (mode != null) {
+            return Boolean.parseBoolean(mode);
+        }
+        // backward compatible
+        return Boolean.getBoolean("offline");
+    }
+
+    /**
+     * Returns nested model directory if the directory contains only one subdirectory.
+     *
+     * @param modelDir the model directory
+     * @return subdirectory if the model directory only contains one subdirectory
+     */
+    public static Path getNestedModelDir(Path modelDir) {
+        if (Files.isDirectory(modelDir)) {
+            try (Stream<Path> stream = Files.list(modelDir)) {
+                // handle actual model directory is subdirectory case
+                List<Path> files =
+                        stream.filter(p -> !p.getFileName().toString().startsWith("."))
+                                .collect(Collectors.toList());
+                if (files.size() == 1 && Files.isDirectory(files.get(0))) {
+                    return files.get(0);
+                }
+            } catch (IOException e) {
+                throw new AssertionError("Failed to list files: " + modelDir, e);
+            }
+        }
+        return modelDir.toAbsolutePath();
+    }
+
+    /**
+     * Resolves a file name against the model directory.
+     *
+     * <p>Model arguments can come from the model's own {@code serving.properties} or {@code
+     * metadata.json}, so a file they name is only resolved inside the model directory. Set {@code
+     * DJL_ALLOW_FILES_OUTSIDE_MODEL_DIR=true} (or {@code
+     * -Dai.djl.allow_files_outside_model_dir=true}) to allow files outside it.
+     *
+     * @param modelDir the model directory
+     * @param name the file name, relative to the model directory or absolute
+     * @return the resolved path
+     * @throws IllegalArgumentException if the file is outside the model directory
+     */
+    public static Path resolveModelFile(Path modelDir, String name) {
+        Path file = modelDir.resolve(name);
+        if (isFileOutsideModelDirAllowed()) {
+            return file;
+        }
+        if (!isInsideDirectory(modelDir, file)) {
+            throw new IllegalArgumentException(
+                    "File is outside the model directory: "
+                            + name
+                            + ". Set DJL_ALLOW_FILES_OUTSIDE_MODEL_DIR=true to override.");
+        }
+        return file;
+    }
+
+    /**
+     * Returns whether a path stays inside a directory.
+     *
+     * <p>Judged on the normalized path rather than the real path: a Hugging Face hub cache links
+     * each file in a snapshot to a shared blob directory, so following links would reject a
+     * correctly downloaded model. Comparison is by path element, so a sibling directory whose name
+     * merely starts with {@code dir}'s name is outside.
+     *
+     * @param dir the directory the path must stay inside
+     * @param file the path to check, usually resolved from an untrusted name
+     * @return true if {@code file} is {@code dir} or sits under it
+     */
+    public static boolean isInsideDirectory(Path dir, Path file) {
+        return file.toAbsolutePath().normalize().startsWith(dir.toAbsolutePath().normalize());
+    }
+
+    /**
+     * Gets the value of the specified environment variable or system property.
+     *
+     * @param name the name of the environment variable
+     * @return the string value of the variable or system property
+     */
+    public static String getEnvOrSystemProperty(String name) {
+        return getEnvOrSystemProperty(name, null);
+    }
+
+    /**
+     * Gets the value of the specified environment variable or system property.
+     *
+     * @param name the name of the environment variable
+     * @param def a default value
+     * @return the string value of the variable or system property
+     */
+    public static String getEnvOrSystemProperty(String name, String def) {
+        try {
+            String env = System.getenv(name);
+            if (env != null) {
+                return env;
+            }
+        } catch (SecurityException e) {
+            logger.warn("Security manager doesn't allow access to the environment variable");
+        }
+
+        String prop = System.getProperty(name);
+        if (prop != null) {
+            return prop;
+        }
+
+        return def;
+    }
+
+    /**
+     * Gets the value of the specified environment variable.
+     *
+     * @param name the name of the environment variable
+     * @param def a default value
+     * @return the string value of the variable, or {@code def} if the variable is not defined in
+     *     the system environment or security manager doesn't allow access to the environment
+     *     variable
+     */
+    public static String getenv(String name, String def) {
+        try {
+            String val = System.getenv(name);
+            return val == null ? def : val;
+        } catch (SecurityException e) {
+            logger.warn("Security manager doesn't allow access to the environment variable");
+        }
+        return def;
+    }
+
+    /**
+     * Gets the value of the specified environment variable.
+     *
+     * @param name the name of the environment variable
+     * @return the string value of the variable, or {@code null} if the variable is not defined in
+     *     the system environment or security manager doesn't allow access to the environment
+     *     variable
+     */
+    public static String getenv(String name) {
+        return getenv(name, null);
+    }
+
+    /**
+     * Returns an unmodifiable string map view of the current system environment.
+     *
+     * @return the environment as a map of variable names to values
+     */
+    public static Map<String, String> getenv() {
+        try {
+            return System.getenv();
+        } catch (SecurityException e) {
+            logger.warn("Security manager doesn't allow access to the environment variable");
+        }
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Opens a connection to this URL and returns an InputStream for reading from that connection.
+     *
+     * @param url the url to open
+     * @return an input stream for reading from the URL connection.
+     * @throws IOException if an I/O exception occurs
+     */
+    public static InputStream openUrl(String url) throws IOException {
+        return openUrl(new URL(url));
+    }
+
+    /**
+     * Opens a connection to this URL and returns an InputStream for reading from that connection.
+     *
+     * @param url the url to open
+     * @return an input stream for reading from the URL connection.
+     * @throws IOException if an I/O exception occurs
+     */
+    public static InputStream openUrl(URL url) throws IOException {
+        return openUrl(url, Collections.emptyMap());
+    }
+
+    /**
+     * Opens a connection to this URL and returns an InputStream for reading from that connection.
+     *
+     * <p><b>Security Warning:</b> This method should NOT be used with untrusted URL inputs. Using
+     * untrusted URLs can lead to:
+     *
+     * <ul>
+     *   <li>Server-Side Request Forgery (SSRF) attacks - allowing access to internal resources
+     *   <li>Local file access via file:// protocol
+     *   <li>Arbitrary network requests to unintended destinations
+     * </ul>
+     *
+     * <p>Always validate and sanitize URL inputs before passing them to this method. Consider:
+     *
+     * <ul>
+     *   <li>Restricting allowed protocols (e.g., only https://)
+     *   <li>Validating against an allowlist of trusted domains
+     *   <li>Blocking access to private IP ranges and localhost
+     * </ul>
+     *
+     * @param url the URL to open
+     * @param headers HTTP headers
+     * @return an input stream for reading from the URL connection.
+     * @throws IOException if an I/O exception occurs, or the destination or scheme is not allowed
+     */
+    public static InputStream openUrl(URL url, Map<String, String> headers) throws IOException {
+        // Remote fetches are limited to public http(s) destinations by default, and redirects are
+        // resolved explicitly so each hop is checked against the same rule. file: is a local read.
+        // jar: is allowed only when the URL it nests is itself local (see below). Other schemes are
+        // not supported. Set DJL_ALLOW_INSECURE_URL=true (or -Dai.djl.allow_insecure_url=true) to
+        // restore the previous unrestricted behavior.
+        String protocol = url.getProtocol();
+        if (isInsecureUrlAllowed()) {
+            if ("http".equalsIgnoreCase(protocol) || "https".equalsIgnoreCase(protocol)) {
+                return openHttpStream(url, headers);
+            }
+            return new BufferedInputStream(url.openStream());
+        }
+        if ("http".equalsIgnoreCase(protocol) || "https".equalsIgnoreCase(protocol)) {
+            return openHttpStream(url, headers);
+        }
+        if ("file".equalsIgnoreCase(protocol)) {
+            requireLocalFileUrl(url);
+            return new BufferedInputStream(url.openStream());
+        }
+        if ("jar".equalsIgnoreCase(protocol)) {
+            // A jar: URL nests another URL, as jar:<nested>!/<entry>, and the connection fetches
+            // that nested URL, so the nested URL is what has to be judged: the outer URL reports
+            // protocol "jar" and an empty host, which no destination rule can act on.
+            requireLocalRead(nestedUrlOf(url));
+            return new BufferedInputStream(url.openStream());
+        }
+        throw new IOException(
+                "Blocked request using unsupported URL protocol: "
+                        + protocol
+                        + ". Set DJL_ALLOW_INSECURE_URL=true to override.");
+    }
+
+    /**
+     * Returns the URL nested inside a {@code jar:} URL, or the URL itself if it cannot be read.
+     *
+     * @param url the jar URL
+     * @return the nested URL
+     * @throws IOException if the nested URL cannot be determined
+     */
+    private static URL nestedUrlOf(URL url) throws IOException {
+        URLConnection conn = url.openConnection();
+        if (!(conn instanceof JarURLConnection)) {
+            // A container may register its own handler for jar:. Without access to the nested URL
+            // there is nothing to judge, so refuse rather than guess.
+            throw new IOException(
+                    "Blocked jar URL with an unrecognized connection type: "
+                            + conn.getClass().getName()
+                            + ". Set DJL_ALLOW_INSECURE_URL=true to override.");
+        }
+        return ((JarURLConnection) conn).getJarFileURL();
+    }
+
+    /**
+     * Verifies that a URL denotes a local read rather than a network fetch.
+     *
+     * <p>Judged on the destination rather than on the scheme name, because several schemes read
+     * locally in one form and over the network in another. {@code file:} with an authority is
+     * fetched over FTP by the JDK, and {@code jar:} nests whatever it is given. Container schemes
+     * that address a resource inside the running application ({@code nested:} for a Spring Boot
+     * executable jar, {@code vfs:}, {@code wsjar:}, {@code bundleresource:}) are local reads and
+     * are allowed, so packaging an application as an executable jar keeps working.
+     *
+     * @param url the URL to check
+     * @throws IOException if the URL would perform a network fetch
+     */
+    private static void requireLocalRead(URL url) throws IOException {
+        String protocol = url.getProtocol();
+        if ("http".equalsIgnoreCase(protocol)
+                || "https".equalsIgnoreCase(protocol)
+                || "ftp".equalsIgnoreCase(protocol)
+                || "ftps".equalsIgnoreCase(protocol)) {
+            throw new IOException(
+                    "Blocked jar URL nesting a remote protocol: "
+                            + protocol
+                            + ". Set DJL_ALLOW_INSECURE_URL=true to override.");
+        }
+        if ("file".equalsIgnoreCase(protocol)) {
+            requireLocalFileUrl(url);
+        } else if ("jar".equalsIgnoreCase(protocol)) {
+            requireLocalRead(nestedUrlOf(url));
+        }
+    }
+
+    /**
+     * Verifies that a {@code file:} URL has no remote authority.
+     *
+     * <p>{@code file://host/path} is not a local read: the JDK's file handler falls back to FTP for
+     * any authority that is not empty, {@code localhost} or a {@code ~} user reference, so such a
+     * URL performs an outbound fetch to {@code host}.
+     *
+     * @param url the file URL to check
+     * @throws IOException if the URL carries a remote authority
+     */
+    private static void requireLocalFileUrl(URL url) throws IOException {
+        String host = url.getHost();
+        if (host != null
+                && !host.isEmpty()
+                && !"localhost".equalsIgnoreCase(host)
+                && !host.startsWith("~")) {
+            throw new IOException(
+                    "Blocked file URL with a remote authority: "
+                            + host
+                            + ". Set DJL_ALLOW_INSECURE_URL=true to override.");
+        }
+    }
+
+    private static InputStream openHttpStream(URL url, Map<String, String> headers)
+            throws IOException {
+        HttpURLConnection conn = openHttpConnection(url, "GET", headers);
+        try {
+            return new BufferedInputStream(conn.getInputStream());
+        } catch (IOException e) {
+            // An error response leaves the connection open, so release it before propagating.
+            conn.disconnect();
+            throw e;
+        }
+    }
+
+    /**
+     * Opens an http(s) connection using the specified request method, resolving redirects
+     * explicitly so that every hop is checked against the same destination rule.
+     *
+     * <p>This is the shared entry point for remote reads: {@link #openUrl(URL, Map)} uses it for
+     * {@code GET}, and callers that only need response metadata can use it for {@code HEAD}. The
+     * caller owns the returned connection and should disconnect it when finished.
+     *
+     * @param url the URL to open
+     * @param method the HTTP request method, for example {@code GET} or {@code HEAD}
+     * @param headers HTTP headers
+     * @return the connection for the final, validated hop
+     * @throws IOException if an I/O exception occurs or a hop is not allowed
+     */
+    public static HttpURLConnection openHttpConnection(
+            URL url, String method, Map<String, String> headers) throws IOException {
+        if (isOfflineMode()) {
+            throw new IOException("Offline mode is enabled.");
+        }
+        if (headers == null) {
+            // No headers is a reasonable thing for a caller to mean, and an NPE from inside the
+            // redirect loop would be hard to trace back to the argument.
+            headers = Collections.emptyMap();
+        }
+        if (isInsecureUrlAllowed()) {
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod(method);
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                conn.addRequestProperty(entry.getKey(), entry.getValue());
+            }
+            return conn;
+        }
+        return openHttpConnection(url, method, headers, Utils::isPublicHost);
+    }
+
+    /**
+     * Opens an http(s) connection, resolving redirects explicitly so that every hop is checked
+     * against {@code hostAllowed} rather than being followed by the connection itself.
+     *
+     * <p>The host check is a parameter so the redirect handling can be exercised against a local
+     * test server.
+     *
+     * @param url the URL to open
+     * @param method the HTTP request method
+     * @param headers HTTP headers
+     * @param hostAllowed the check applied to the host of every hop
+     * @return the connection for the final, validated hop
+     * @throws IOException if an I/O exception occurs or a hop is not allowed
+     */
+    static HttpURLConnection openHttpConnection(
+            URL url, String method, Map<String, String> headers, Predicate<String> hostAllowed)
+            throws IOException {
+        // Also normalised here rather than relying on the public overload: this one is called
+        // directly, so it should not depend on a caller having done it.
+        Map<String, String> requestHeaders = headers == null ? Collections.emptyMap() : headers;
+        URL current = url;
+        // Set once a redirect leaves the original origin, so credentials are not carried to it.
+        boolean stripCredentials = false;
+        // One initial request plus at most MAX_REDIRECTS redirect hops.
+        for (int i = 0; i <= MAX_REDIRECTS; ++i) {
+            String protocol = current.getProtocol();
+            if (!"http".equalsIgnoreCase(protocol) && !"https".equalsIgnoreCase(protocol)) {
+                throw new IOException("Blocked redirect to unsupported URL protocol: " + protocol);
+            }
+            if (!hostAllowed.test(current.getHost())) {
+                throw new IOException(
+                        "Blocked request to non-public address: " + current.getHost());
+            }
+            HttpURLConnection conn = (HttpURLConnection) current.openConnection();
+            conn.setInstanceFollowRedirects(false);
+            // Bound the connect phase. This loop can open up to MAX_REDIRECTS + 1 connections, so
+            // without it a black-holed destination multiplies the OS SYN timeout by the hop count.
+            // Only the connect phase is bounded: a read timeout would also apply to the body, and
+            // artifact downloads are large and legitimately slow.
+            conn.setConnectTimeout(CONNECT_TIMEOUT_MILLIS);
+            conn.setRequestMethod(method);
+            for (Map.Entry<String, String> entry : requestHeaders.entrySet()) {
+                if (stripCredentials && isCredentialHeader(entry.getKey())) {
+                    continue;
+                }
+                conn.addRequestProperty(entry.getKey(), entry.getValue());
+            }
+            int code;
+            try {
+                code = conn.getResponseCode();
+            } catch (IOException e) {
+                conn.disconnect();
+                throw e;
+            }
+            if (!isRedirect(code)) {
+                if (code / 100 == 3) {
+                    // A 3xx that is not followed (300, 304, 305, ...) still carries a body, and
+                    // getInputStream() succeeds for any code below 400, so returning it would let
+                    // a negotiation page be written out as the model or the native library.
+                    conn.disconnect();
+                    throw new IOException(
+                            "Unexpected redirect status " + code + " for URL: " + url);
+                }
+                // Other statuses are the caller's to interpret: openUrl surfaces an error when the
+                // stream is opened, and the content-length probe treats non-200 as unknown size.
+                return conn;
+            }
+            // Redirect: re-validate the target on the next loop iteration instead of letting
+            // HttpURLConnection follow it blindly (which would defeat the host check above).
+            String location = conn.getHeaderField("Location");
+            conn.disconnect();
+            if (location == null) {
+                throw new IOException("Redirect (" + code + ") with no Location header");
+            }
+            // Resolve relative redirects against the current URL, then re-validate the target.
+            URL next = new URL(current, location);
+            if (isSchemeDowngrade(current, next)) {
+                throw new IOException(
+                        "Blocked redirect downgrading https to " + next.getProtocol());
+            }
+            if (!sameOrigin(current, next)) {
+                // Following a redirect to another origin must not carry credentials with it. Once
+                // dropped they stay dropped, even if a later hop returns to the original origin.
+                stripCredentials = true;
+            }
+            current = next;
+        }
+        throw new IOException("Too many redirects (>" + MAX_REDIRECTS + ") for URL: " + url);
+    }
+
+    /**
+     * Returns whether insecure (non-public) URL access is explicitly allowed.
+     *
+     * @return true if {@code DJL_ALLOW_INSECURE_URL} / {@code ai.djl.allow_insecure_url} is set
+     *     true
+     */
+    public static boolean isInsecureUrlAllowed() {
+        String mode =
+                getenv("DJL_ALLOW_INSECURE_URL", System.getProperty("ai.djl.allow_insecure_url"));
+        return Boolean.parseBoolean(mode);
+    }
+
+    /**
+     * Returns whether model arguments may name files outside the model directory.
+     *
+     * @return true if {@code DJL_ALLOW_FILES_OUTSIDE_MODEL_DIR} / {@code
+     *     ai.djl.allow_files_outside_model_dir} is set true
+     */
+    public static boolean isFileOutsideModelDirAllowed() {
+        String mode =
+                getenv(
+                        "DJL_ALLOW_FILES_OUTSIDE_MODEL_DIR",
+                        System.getProperty("ai.djl.allow_files_outside_model_dir"));
+        return Boolean.parseBoolean(mode);
+    }
+
+    /**
+     * Returns whether a host resolves exclusively to public (non-internal) IP addresses.
+     *
+     * <p>A host is rejected if it is empty or if any resolved address is loopback, link-local,
+     * site-local (RFC 1918 private), wildcard, multicast, or an IPv6 unique local address
+     * (fc00::/7). The latter is checked explicitly because {@link InetAddress#isSiteLocalAddress()}
+     * only covers the deprecated fec0::/10 range. IPv4-mapped IPv6 literals resolve to an {@code
+     * Inet4Address} and are covered by the IPv4 checks.
+     *
+     * <p>Note that this resolves the host name and the subsequent connection resolves it again, so
+     * a name that resolves to an allowed address here could resolve to a different address when the
+     * connection is made. Pinning the connection to a validated address would be needed to close
+     * that gap; environments that require it should restrict egress at the network layer.
+     *
+     * @param host the host name to validate
+     * @return true if every resolved address is a public address
+     */
+    static boolean isPublicHost(String host) {
+        if (host == null || host.isEmpty()) {
+            return false;
+        }
+        try {
+            InetAddress[] addresses = InetAddress.getAllByName(host);
+            if (addresses.length == 0) {
+                return false;
+            }
+            for (InetAddress addr : addresses) {
+                if (addr.isLoopbackAddress()
+                        || addr.isLinkLocalAddress()
+                        || addr.isSiteLocalAddress()
+                        || addr.isAnyLocalAddress()
+                        || addr.isMulticastAddress()
+                        || isIpv6UniqueLocal(addr)
+                        || isCarrierGradeNat(addr)) {
+                    return false;
+                }
+            }
+        } catch (UnknownHostException e) {
+            // The host name is the actionable part; the stack trace adds nothing and would be
+            // emitted once per unresolvable host.
+            logger.warn("Cannot resolve host, treating as not public: {}", host);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Returns whether following {@code to} from {@code from} would drop TLS.
+     *
+     * <p>{@link HttpURLConnection} refuses to follow a redirect that changes scheme, so resolving
+     * hops explicitly has to refuse the downgrade too. Otherwise an {@code https} fetch answered
+     * with a plaintext {@code Location} would be retrieved in the clear, and nothing downstream
+     * would notice: {@code SimpleUrlRepository} never records a checksum, so checksum validation is
+     * a no-op for these artifacts.
+     *
+     * @param from the current hop
+     * @param to the redirect target
+     * @return true if the hop drops https
+     */
+    static boolean isSchemeDowngrade(URL from, URL to) {
+        return "https".equalsIgnoreCase(from.getProtocol())
+                && !"https".equalsIgnoreCase(to.getProtocol());
+    }
+
+    /**
+     * Returns whether two URLs share a scheme, host and effective port.
+     *
+     * @param a the first URL
+     * @param b the second URL
+     * @return true if both URLs have the same origin
+     */
+    static boolean sameOrigin(URL a, URL b) {
+        return a.getProtocol().equalsIgnoreCase(b.getProtocol())
+                && a.getHost().equalsIgnoreCase(b.getHost())
+                && effectivePort(a) == effectivePort(b);
+    }
+
+    /**
+     * Returns the port of a URL, substituting the protocol default when the port is implicit.
+     *
+     * <p>{@link URL#getPort()} returns -1 for an implicit port, so comparing it directly would
+     * treat {@code https://host/a} and {@code https://host:443/b} as different origins.
+     *
+     * @param url the URL to read the port from
+     * @return the explicit port, or the protocol default when the port is implicit
+     */
+    private static int effectivePort(URL url) {
+        int port = url.getPort();
+        return port == -1 ? url.getDefaultPort() : port;
+    }
+
+    /**
+     * Returns whether a header name carries credentials that must not follow a cross-origin
+     * redirect.
+     *
+     * @param name the header name
+     * @return true if the header carries credentials
+     */
+    static boolean isCredentialHeader(String name) {
+        return "Authorization".equalsIgnoreCase(name)
+                || "Cookie".equalsIgnoreCase(name)
+                || "Proxy-Authorization".equalsIgnoreCase(name);
+    }
+
+    private static boolean isRedirect(int code) {
+        // 300, 304 and 305 are 3xx but are not redirects to follow.
+        return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+    }
+
+    /**
+     * Returns whether an IPv4 address is in the RFC 6598 carrier-grade NAT range (100.64.0.0/10).
+     *
+     * <p>Checked explicitly because {@link InetAddress} has no predicate for it and because it is
+     * routinely used for Kubernetes secondary pod CIDRs, so an internal service can be addressed
+     * there. Other reserved ranges are deliberately not included: no deployment serves an internal
+     * endpoint from IETF protocol assignments or unallocated space, so blocking them would add
+     * surface without removing risk.
+     *
+     * @param addr the address to classify
+     * @return true if the address is in 100.64.0.0/10
+     */
+    private static boolean isCarrierGradeNat(InetAddress addr) {
+        byte[] b = addr.getAddress();
+        if (b.length != 4 || (b[0] & 0xFF) != 100) {
+            return false;
+        }
+        int second = b[1] & 0xFF;
+        return second >= 64 && second <= 127;
+    }
+
+    private static boolean isIpv6UniqueLocal(InetAddress addr) {
+        byte[] bytes = addr.getAddress();
+        // fc00::/7 - the first seven bits are 1111110
+        return bytes.length == 16 && (bytes[0] & 0xFE) == 0xFC;
+    }
+
+    /**
+     * Returns a hash of a string.
+     *
+     * @param input the input string
+     * @return a 20 bytes hash of the input stream in hex format
+     */
+    public static String hash(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] buf = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            return Hex.toHexString(buf, 0, 20);
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError("SHA256 algorithm not found.", e);
+        }
     }
 }

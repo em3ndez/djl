@@ -17,9 +17,11 @@ import ai.djl.basicdataset.BasicDatasets;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.util.JsonUtils;
 import ai.djl.util.Progress;
+
+import org.apache.commons.csv.CSVFormat;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -27,9 +29,8 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import org.apache.commons.csv.CSVFormat;
 
 /**
  * Ames house pricing dataset from
@@ -42,20 +43,23 @@ import org.apache.commons.csv.CSVFormat;
  * <p>Test Set: 1459 Records
  *
  * <p>Can enable/disable features Set one hot vector for categorical variables
+ *
+ * <p>Call {@link Builder#addAllFeatures()} to include all features from the dataset. The label is a
+ * numeric column named "saleprice".
  */
 public class AmesRandomAccess extends CsvDataset {
 
     private static final String ARTIFACT_ID = "ames";
+    private static final String VERSION = "1.0";
 
     private Usage usage;
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     AmesRandomAccess(Builder builder) {
         super(builder);
         usage = builder.usage;
-        MRL mrl = MRL.dataset(Tabular.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.0");
+        mrl = builder.getMrl();
     }
 
     /** {@inheritDoc} */
@@ -65,10 +69,10 @@ public class AmesRandomAccess extends CsvDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
 
-        Path dir = resource.getRepository().getResourceDirectory(artifact);
+        Path dir = mrl.getRepository().getResourceDirectory(artifact);
         Path root = dir.resolve("house-prices-advanced-regression-techniques");
         Path csvFile;
         switch (usage) {
@@ -113,7 +117,13 @@ public class AmesRandomAccess extends CsvDataset {
             artifactId = ARTIFACT_ID;
             usage = Usage.TRAIN;
             csvFormat =
-                    CSVFormat.DEFAULT.withFirstRecordAsHeader().withIgnoreHeaderCase().withTrim();
+                    CSVFormat.DEFAULT
+                            .builder()
+                            .setHeader()
+                            .setSkipHeaderRecord(true)
+                            .setIgnoreHeaderCase(true)
+                            .setTrim(true)
+                            .get();
         }
 
         /** {@inheritDoc} */
@@ -192,13 +202,27 @@ public class AmesRandomAccess extends CsvDataset {
         public Builder addFeature(String name, boolean onehotEncode) {
             parseFeatures();
             if (af.categorical.contains(name)) {
-                Map<String, Integer> map = af.featureToMap.get(name);
-                if (map == null) {
-                    return addCategoricalFeature(name);
-                }
-                return addCategoricalFeature(name, map, onehotEncode);
+                return addCategoricalFeature(name, onehotEncode);
             }
             return addNumericFeature(name);
+        }
+
+        /**
+         * Adds all features to the features set.
+         *
+         * @return this builder
+         */
+        public Builder addAllFeatures() {
+            if (features.isEmpty()) {
+                parseFeatures();
+                for (String name : af.featureArray) {
+                    addFeature(name);
+                }
+            }
+            if (labels.isEmpty()) {
+                addNumericLabel("saleprice");
+            }
+            return this;
         }
 
         /**
@@ -218,21 +242,14 @@ public class AmesRandomAccess extends CsvDataset {
          */
         @Override
         public AmesRandomAccess build() {
-            if (features.isEmpty()) {
-                parseFeatures();
-                for (String name : af.featureArray) {
-                    addFeature(name);
-                }
-            }
-            if (labels.isEmpty()) {
-                addNumericLabel("saleprice");
-            }
             return new AmesRandomAccess(this);
         }
 
         private void parseFeatures() {
             if (af == null) {
-                try (InputStream is = AmesRandomAccess.class.getResourceAsStream("ames.json");
+                try (InputStream is =
+                                Objects.requireNonNull(
+                                        AmesRandomAccess.class.getResourceAsStream("ames.json"));
                         Reader reader = new InputStreamReader(is, StandardCharsets.UTF_8)) {
                     af = JsonUtils.GSON.fromJson(reader, AmesFeatures.class);
                 } catch (IOException e) {
@@ -240,12 +257,33 @@ public class AmesRandomAccess extends CsvDataset {
                 }
             }
         }
+
+        MRL getMrl() {
+            return repository.dataset(Tabular.ANY, groupId, artifactId, VERSION);
+        }
     }
 
     private static final class AmesFeatures {
 
         List<String> featureArray;
         Set<String> categorical;
-        Map<String, Map<String, Integer>> featureToMap;
+
+        /**
+         * Sets the feature array.
+         *
+         * @param featureArray the feature array
+         */
+        public void setFeatureArray(List<String> featureArray) {
+            this.featureArray = featureArray;
+        }
+
+        /**
+         * Sets the categorical value.
+         *
+         * @param categorical the categorical value
+         */
+        public void setCategorical(Set<String> categorical) {
+            this.categorical = categorical;
+        }
     }
 }

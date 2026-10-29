@@ -16,12 +16,19 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonPrimitive;
 import com.google.gson.JsonSerializer;
+import com.google.gson.reflect.TypeToken;
+
+import java.lang.reflect.Type;
+import java.util.List;
 
 /** An interface containing Gson constants. */
 public interface JsonUtils {
 
-    Gson GSON = new GsonBuilder().create();
-    Gson GSON_PRETTY = builder().create();
+    boolean PRETTY_PRINT = Boolean.parseBoolean(Utils.getEnvOrSystemProperty("DJL_PRETTY_PRINT"));
+    Gson GSON = builder().create();
+    Gson GSON_COMPACT = builder(false).create();
+    Gson GSON_PRETTY = builder(true).create();
+    Type LIST_TYPE = new TypeToken<List<String>>() {}.getType();
 
     /**
      * Returns a custom {@code GsonBuilder} instance.
@@ -29,18 +36,45 @@ public interface JsonUtils {
      * @return a custom {@code GsonBuilder} instance.
      */
     static GsonBuilder builder() {
-        return new GsonBuilder()
-                .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
-                .setPrettyPrinting()
-                .registerTypeAdapter(
-                        Double.class,
-                        (JsonSerializer<Double>)
-                                (src, t, ctx) -> {
-                                    long v = src.longValue();
-                                    if (src.equals(Double.valueOf(String.valueOf(v)))) {
-                                        return new JsonPrimitive(v);
-                                    }
-                                    return new JsonPrimitive(src);
-                                });
+        return builder(PRETTY_PRINT);
+    }
+
+    /**
+     * Returns a custom {@code GsonBuilder} instance.
+     *
+     * @param prettyPrint true for pretty print
+     * @return a custom {@code GsonBuilder} instance.
+     */
+    static GsonBuilder builder(boolean prettyPrint) {
+        GsonBuilder builder =
+                new GsonBuilder()
+                        .setDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+                        .serializeSpecialFloatingPointValues()
+                        .registerTypeHierarchyAdapter(
+                                JsonSerializable.class, new JsonSerializable.Serializer())
+                        .registerTypeAdapter(
+                                Double.class,
+                                (JsonSerializer<Double>)
+                                        (src, t, ctx) -> {
+                                            long v = src.longValue();
+                                            if (src.equals(Double.valueOf(String.valueOf(v)))) {
+                                                return new JsonPrimitive(v);
+                                            }
+                                            return new JsonPrimitive(src);
+                                        });
+        if (prettyPrint) {
+            builder.setPrettyPrinting();
+        }
+        return builder;
+    }
+
+    /**
+     * Serializes the specified object into its equivalent JSON representation.
+     *
+     * @param src the source object
+     * @return the json string
+     */
+    static String toJson(Object src) {
+        return GSON.toJson(src);
     }
 }

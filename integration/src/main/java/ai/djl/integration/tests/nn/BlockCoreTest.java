@@ -16,11 +16,12 @@ import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.engine.Engine;
 import ai.djl.integration.util.TestUtils;
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.DefaultVocabulary;
 import ai.djl.modality.nlp.embedding.TrainableWordEmbedding;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.LayoutType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
@@ -33,9 +34,14 @@ import ai.djl.nn.convolutional.Conv1dTranspose;
 import ai.djl.nn.convolutional.Conv2d;
 import ai.djl.nn.convolutional.Conv2dTranspose;
 import ai.djl.nn.convolutional.Conv3d;
+import ai.djl.nn.core.ConstantEmbedding;
 import ai.djl.nn.core.Linear;
+import ai.djl.nn.core.LinearCollection;
+import ai.djl.nn.core.Multiplication;
 import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.norm.Dropout;
+import ai.djl.nn.norm.GhostBatchNorm;
+import ai.djl.nn.norm.LayerNorm;
 import ai.djl.nn.recurrent.GRU;
 import ai.djl.nn.recurrent.LSTM;
 import ai.djl.nn.recurrent.RNN;
@@ -48,14 +54,17 @@ import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.loss.SoftmaxCrossEntropyLoss;
 import ai.djl.util.PairList;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.util.Arrays;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.stream.IntStream;
 
 public class BlockCoreTest {
 
@@ -67,7 +76,7 @@ public class BlockCoreTest {
 
         long outSize = 3;
         Block block = Linear.builder().setUnits(outSize).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -87,7 +96,7 @@ public class BlockCoreTest {
         }
 
         block = Linear.builder().setUnits(outSize).optBias(false).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -106,7 +115,7 @@ public class BlockCoreTest {
 
         outSize = 10;
         block = Linear.builder().setUnits(outSize).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -130,7 +139,7 @@ public class BlockCoreTest {
 
         long outSize = 3;
         Block block = Linear.builder().setUnits(outSize).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -153,7 +162,7 @@ public class BlockCoreTest {
         }
 
         block = Linear.builder().setUnits(outSize).optBias(false).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -174,6 +183,223 @@ public class BlockCoreTest {
         }
     }
 
+    @Test
+    public void testLinearCollection() throws IOException, MalformedModelException {
+
+        // used to initialize both weight and bias
+        Initializer initializer =
+                (m, s, t) -> m.arange(0, s.size(), 1, DataType.FLOAT32).reshape(s);
+        TrainingConfig config =
+                new DefaultTrainingConfig(Loss.l2Loss())
+                        .optInitializer(initializer, Parameter.Type.WEIGHT)
+                        .optInitializer(initializer, Parameter.Type.BIAS);
+        int featureSize = 5;
+        int outSize = 7;
+        int batchSize = 11;
+        // number of linear transformations modeled by LinearCollection
+        int splitSize = 6;
+
+        // following ndarrays will be scoped to <code>sharedManager</code> so they can be
+        // used later in the for-loop
+        NDArray expectedWeightForLinearCollection;
+        NDArray expectedBiasForLinearCollection;
+        NDArray expectedLabelsForLinearCollection;
+        NDArray dataForLinearCollection;
+
+        try (NDManager sharedManager = NDManager.newBaseManager(TestUtils.getEngine())) {
+
+            // test expected output when using LinearCollection
+            try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+                Block block = LinearCollection.builder().setUnits(outSize).build();
+                model.setBlock(block);
+
+                try (Trainer trainer = model.newTrainer(config)) {
+                    Shape inputShape = new Shape(batchSize, splitSize, featureSize);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    dataForLinearCollection =
+                            sharedManager.arange(inputShape.size()).reshape(inputShape);
+                    NDArray actualLabels =
+                            trainer.forward(new NDList(dataForLinearCollection)).singletonOrThrow();
+                    NDArray actualWeight = block.getParameters().get("weight").getArray();
+                    NDArray actualBias = block.getParameters().get("bias").getArray();
+                    expectedWeightForLinearCollection =
+                            initializer.initialize(
+                                    sharedManager,
+                                    new Shape(splitSize, featureSize, outSize),
+                                    DataType.FLOAT32);
+                    expectedBiasForLinearCollection =
+                            initializer.initialize(
+                                    sharedManager, new Shape(splitSize, outSize), DataType.FLOAT32);
+                    Assert.assertEquals(expectedWeightForLinearCollection, actualWeight);
+                    Assert.assertEquals(expectedBiasForLinearCollection, actualBias);
+                    expectedLabelsForLinearCollection =
+                            dataForLinearCollection
+                                    .transpose(1, 0, 2)
+                                    .matMul(expectedWeightForLinearCollection)
+                                    .transpose(1, 0, 2)
+                                    .add(expectedBiasForLinearCollection);
+                    Assert.assertEquals(expectedLabelsForLinearCollection, actualLabels);
+
+                    testEncode(manager, block);
+                }
+            }
+
+            // test expected output can be reproduced by using splitSize-many Linear blocks
+            for (int splitIndex : IntStream.range(0, splitSize).toArray()) {
+                try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+                    Block block = Linear.builder().setUnits(outSize).build();
+                    model.setBlock(block);
+
+                    try (Trainer trainer = model.newTrainer(config)) {
+
+                        // copy initial weight/bias values from LinearCollection
+                        Shape inputShape = new Shape(batchSize, featureSize);
+                        block.setInitializer(
+                                (m, s, t) ->
+                                        expectedWeightForLinearCollection
+                                                .get(m, splitIndex)
+                                                .transpose(),
+                                Parameter.Type.WEIGHT);
+                        block.setInitializer(
+                                (m, s, t) -> expectedBiasForLinearCollection.get(m, splitIndex),
+                                Parameter.Type.BIAS);
+                        trainer.initialize(inputShape);
+
+                        NDManager manager = trainer.getManager();
+                        NDArray data = dataForLinearCollection.transpose(1, 0, 2).get(splitIndex);
+                        NDArray actualLabels = trainer.forward(new NDList(data)).singletonOrThrow();
+                        NDArray actualWeight = block.getParameters().get("weight").getArray();
+                        NDArray actualBias = block.getParameters().get("bias").getArray();
+                        NDArray expectedWeight =
+                                expectedWeightForLinearCollection.get(splitIndex).transpose();
+                        NDArray expectedBias = expectedBiasForLinearCollection.get(splitIndex);
+                        Assert.assertEquals(expectedWeight, actualWeight);
+                        Assert.assertEquals(expectedBias, actualBias);
+                        NDArray expectedLabels =
+                                data.dot(expectedWeight.transpose()).add(expectedBias);
+                        Assert.assertEquals(expectedLabels, actualLabels);
+                        Assert.assertEquals(
+                                expectedLabelsForLinearCollection
+                                        .transpose(1, 0, 2)
+                                        .get(splitIndex),
+                                actualLabels);
+
+                        testEncode(manager, block);
+                    }
+                }
+            }
+
+            // test expected output when using multiple split axis
+            try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+                Block block = LinearCollection.builder().setUnits(outSize).build();
+                model.setBlock(block);
+
+                try (Trainer trainer = model.newTrainer(config)) {
+                    long[] splitAxis = {3, 1, 2};
+                    Assert.assertEquals(splitSize, new Shape(splitAxis).size());
+                    Shape inputShape = new Shape(batchSize).add(splitAxis).add(featureSize);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    NDArray data = dataForLinearCollection.reshape(inputShape);
+                    NDArray actualLabels = trainer.forward(new NDList(data)).singletonOrThrow();
+                    NDArray actualWeight = block.getParameters().get("weight").getArray();
+                    NDArray actualBias = block.getParameters().get("bias").getArray();
+                    NDArray expectedWeight =
+                            initializer.initialize(
+                                    manager,
+                                    new Shape(splitAxis).add(featureSize, outSize),
+                                    DataType.FLOAT32);
+                    NDArray expectedBias =
+                            initializer.initialize(
+                                    manager, new Shape(splitAxis).add(outSize), DataType.FLOAT32);
+                    Assert.assertEquals(expectedWeight, actualWeight);
+                    Assert.assertEquals(expectedBias, actualBias);
+                    NDArray expectedLabels =
+                            data.transpose(1, 2, 3, 0, 4)
+                                    .matMul(expectedWeight)
+                                    .transpose(3, 0, 1, 2, 4)
+                                    .add(expectedBias);
+                    Assert.assertEquals(expectedLabels, actualLabels);
+                    Assert.assertEquals(
+                            expectedLabelsForLinearCollection.reshape(
+                                    new Shape(batchSize).add(splitAxis).add(outSize)),
+                            actualLabels);
+
+                    testEncode(manager, block);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testMultiplication() throws IOException, MalformedModelException {
+
+        // 4 samples times 3 features
+        float[][] dataArr = {{0, 1, 2}, {3, 4, 5}, {6, 7, 8}, {9, 10, 11}};
+
+        // 2 units times 3 features
+        float[][] weightArr = {{0, 1, 2}, {10, 11, 12}};
+
+        // store sum on Multiplication block's result
+        NDArray sum;
+
+        try (NDManager sharedManager = NDManager.newBaseManager(TestUtils.getEngine())) {
+
+            // test algebraic expectation of Multiplication block
+            long outSize = 2;
+            Block block = Multiplication.builder().setUnits(outSize).build();
+            try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+                model.setBlock(block);
+
+                TrainingConfig config =
+                        new DefaultTrainingConfig(Loss.l2Loss())
+                                .optInitializer(
+                                        (m, s, t) -> m.create(weightArr).expandDims(1),
+                                        Parameter.Type.WEIGHT);
+                try (Trainer trainer = model.newTrainer(config)) {
+                    Shape inputShape = new Shape(4, 3);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    NDArray data = manager.create(dataArr);
+                    NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
+                    NDArray expected = data.mul(manager.create(weightArr).expandDims(1));
+                    Assert.assertEquals(result, expected);
+
+                    testEncode(manager, block);
+
+                    sum = result.sum(new int[] {-1}).transpose();
+                    sum.attach(sharedManager);
+                }
+            }
+
+            // test "sum" is equal to linear transformation without bias
+            block = Linear.builder().setUnits(outSize).optBias(false).build();
+            try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+                model.setBlock(block);
+
+                TrainingConfig config =
+                        new DefaultTrainingConfig(Loss.l2Loss())
+                                .optInitializer(
+                                        (m, s, t) -> m.create(weightArr), Parameter.Type.WEIGHT);
+                try (Trainer trainer = model.newTrainer(config)) {
+                    Shape inputShape = new Shape(4, 3);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    NDArray data = manager.create(dataArr);
+                    NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
+                    NDArray expected = data.dot(manager.create(weightArr).transpose());
+                    Assert.assertEquals(result, expected);
+                    Assert.assertEquals(result, sum);
+                }
+            }
+        }
+    }
+
     @SuppressWarnings("try")
     @Test
     public void testBatchNorm() throws IOException, MalformedModelException {
@@ -182,7 +408,7 @@ public class BlockCoreTest {
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
 
         Block block = BatchNorm.builder().build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -204,13 +430,106 @@ public class BlockCoreTest {
 
     @SuppressWarnings("try")
     @Test
+    public void testGhostBatchNorm() throws IOException, MalformedModelException {
+        TrainingConfig config =
+                new DefaultTrainingConfig(Loss.l2Loss())
+                        .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+
+        Block block = GhostBatchNorm.builder().build();
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+            model.setBlock(block);
+
+            try (Trainer trainer = model.newTrainer(config)) {
+                // the unused GradientCollector is for BatchNorm to know it is on training mode
+                try (GradientCollector collector = trainer.newGradientCollector()) {
+                    Shape inputShape = new Shape(1, 1, 10);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    NDArray data = manager.arange(10f).reshape(inputShape);
+                    NDArray expected =
+                            manager.create(
+                                    new float[] {
+                                        -1.5667f, -1.2185f, -0.8704f, -0.5222f, -0.1741f, 0.1741f,
+                                        0.5222f, 0.8704f, 1.2185f, 1.5667f
+                                    },
+                                    inputShape);
+                    NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
+
+                    Assertions.assertAlmostEquals(result, expected);
+                    testEncode(manager, block);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("try")
+    @Test
+    public void testLayerNorm() throws IOException, MalformedModelException {
+        TestUtils.requiresEngine("PyTorch", "MXNet");
+
+        TrainingConfig config =
+                new DefaultTrainingConfig(Loss.l2Loss())
+                        .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+
+        Block block = LayerNorm.builder().build();
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+            model.setBlock(block);
+
+            try (Trainer trainer = model.newTrainer(config)) {
+                try (GradientCollector collector = trainer.newGradientCollector()) {
+                    Shape inputShape = new Shape(2, 2);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    NDArray data = manager.create(new float[] {1, 3, 2, 4}, inputShape);
+                    NDArray expected = manager.create(new float[] {-1, 1, -1, 1}, inputShape);
+                    NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
+                    Assertions.assertAlmostEquals(result, expected);
+                    testEncode(manager, block);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("try")
+    @Test
+    public void test2LayerNorm() throws IOException, MalformedModelException {
+        TestUtils.requiresEngine("PyTorch", "MXNet");
+
+        TrainingConfig config =
+                new DefaultTrainingConfig(Loss.l2Loss())
+                        .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+
+        Block block = LayerNorm.builder().axis(2, 3).build();
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+            model.setBlock(block);
+
+            try (Trainer trainer = model.newTrainer(config)) {
+                try (GradientCollector collector = trainer.newGradientCollector()) {
+                    Shape inputShape = new Shape(1, 2, 1, 2);
+                    trainer.initialize(inputShape);
+
+                    NDManager manager = trainer.getManager();
+                    NDArray data = manager.create(new float[] {1, 3, 2, 4}, inputShape);
+                    NDArray expected = manager.create(new float[] {-1, 1, -1, 1}, inputShape);
+                    NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
+                    Assertions.assertAlmostEquals(result, expected);
+                    testEncode(manager, block);
+                }
+            }
+        }
+    }
+
+    @SuppressWarnings("try")
+    @Test
     public void testDropout() throws IOException, MalformedModelException {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.l2Loss())
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
 
         Block block = Dropout.builder().optRate(.5f).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -238,10 +557,14 @@ public class BlockCoreTest {
 
         TrainableWordEmbedding block =
                 TrainableWordEmbedding.builder()
-                        .setVocabulary(new SimpleVocabulary(Arrays.asList("a", "b", "c")))
+                        .setVocabulary(
+                                DefaultVocabulary.builder()
+                                        .add(Arrays.asList("a", "b", "c"))
+                                        .optUnknownToken()
+                                        .build())
                         .setEmbeddingSize(2)
                         .build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -265,6 +588,40 @@ public class BlockCoreTest {
     }
 
     @Test
+    public void testConstantEmbedding() {
+        TrainingConfig config =
+                new DefaultTrainingConfig(Loss.l2Loss())
+                        .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
+
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+            NDArray embedding = model.getNDManager().create(new float[] {1, 2}, new Shape(2));
+            ConstantEmbedding block = new ConstantEmbedding(embedding);
+            model.setBlock(block);
+
+            try (Trainer trainer = model.newTrainer(config)) {
+                Shape inputShape = new Shape(2);
+                trainer.initialize(inputShape);
+
+                NDManager manager = trainer.getManager();
+
+                Assert.assertEquals(
+                        trainer.forward(new NDList(manager.create(0.1f))).singletonOrThrow(),
+                        manager.create(new float[] {1, 2}, new Shape(2)));
+
+                Assert.assertEquals(
+                        trainer.forward(new NDList(manager.create(new float[] {1, 1})))
+                                .singletonOrThrow(),
+                        manager.create(new float[] {1, 2, 1, 2}, new Shape(2, 2)));
+
+                Assert.assertEquals(block.embed("x"), 0);
+                Assert.assertEquals(
+                        block.embed(manager, new String[] {"x"}),
+                        manager.create(new float[] {1, 2}, new Shape(1, 2)));
+            }
+        }
+    }
+
+    @Test
     public void testConv1d() throws IOException, MalformedModelException {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.l2Loss())
@@ -273,7 +630,7 @@ public class BlockCoreTest {
         Block block =
                 Conv1d.builder().setKernelShape(new Shape(2)).setFilters(1).optBias(false).build();
 
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -310,7 +667,7 @@ public class BlockCoreTest {
                         .optBias(false)
                         .build();
 
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -339,7 +696,7 @@ public class BlockCoreTest {
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
 
         Block block = Conv2d.builder().setKernelShape(new Shape(2, 2)).setFilters(1).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -372,7 +729,7 @@ public class BlockCoreTest {
 
         Block block =
                 Conv2dTranspose.builder().setKernelShape(new Shape(2, 2)).setFilters(1).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -409,7 +766,7 @@ public class BlockCoreTest {
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
 
         Block block = Conv3d.builder().setKernelShape(new Shape(2, 2, 2)).setFilters(1).build();
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -447,7 +804,7 @@ public class BlockCoreTest {
         TrainingConfig config =
                 new DefaultTrainingConfig(loss)
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT)
-                        .optDevices(TestUtils.getDevices());
+                        .optDevices(TestUtils.getDevices(Integer.MAX_VALUE));
         Block block =
                 RNN.builder()
                         .setStateSize(4)
@@ -456,14 +813,15 @@ public class BlockCoreTest {
                         .optBatchFirst(true)
                         .optReturnState(true)
                         .build();
-        try (Model model = Model.newInstance("model", config.getDevices()[0])) {
+        try (Model model =
+                Model.newInstance("model", config.getDevices()[0], TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
                 // the unused GradientCollector is for BatchNorm to know it is on training mode
                 try (GradientCollector collector = trainer.newGradientCollector()) {
                     Shape inputShape = new Shape(1, 2, 4);
-                    Engine.getInstance().setRandomSeed(1234);
+                    Engine.getEngine(TestUtils.getEngine()).setRandomSeed(1234);
                     trainer.initialize(inputShape);
                     NDManager manager = trainer.getManager();
                     NDArray data =
@@ -494,7 +852,7 @@ public class BlockCoreTest {
         TrainingConfig config =
                 new DefaultTrainingConfig(loss)
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT)
-                        .optDevices(TestUtils.getDevices());
+                        .optDevices(TestUtils.getDevices(Integer.MAX_VALUE));
         Block block =
                 RNN.builder()
                         .setStateSize(4)
@@ -503,14 +861,15 @@ public class BlockCoreTest {
                         .optBatchFirst(true)
                         .optReturnState(true)
                         .build();
-        try (Model model = Model.newInstance("model", config.getDevices()[0])) {
+        try (Model model =
+                Model.newInstance("model", config.getDevices()[0], TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
                 // the unused GradientCollector is for BatchNorm to know it is on training mode
                 try (GradientCollector collector = trainer.newGradientCollector()) {
                     Shape inputShape = new Shape(1, 2, 4);
-                    Engine.getInstance().setRandomSeed(1234);
+                    Engine.getEngine(TestUtils.getEngine()).setRandomSeed(1234);
                     trainer.initialize(inputShape);
                     NDManager manager = trainer.getManager();
                     NDArray data =
@@ -544,7 +903,7 @@ public class BlockCoreTest {
         TrainingConfig config =
                 new DefaultTrainingConfig(loss)
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT)
-                        .optDevices(TestUtils.getDevices());
+                        .optDevices(TestUtils.getDevices(Integer.MAX_VALUE));
         Block block =
                 LSTM.builder()
                         .setStateSize(4)
@@ -552,14 +911,15 @@ public class BlockCoreTest {
                         .optBatchFirst(true)
                         .optReturnState(true)
                         .build();
-        try (Model model = Model.newInstance("model", config.getDevices()[0])) {
+        try (Model model =
+                Model.newInstance("model", config.getDevices()[0], TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
                 // the unused GradientCollector is for BatchNorm to know it is on training mode
                 try (GradientCollector collector = trainer.newGradientCollector()) {
                     Shape inputShape = new Shape(1, 2, 4);
-                    Engine.getInstance().setRandomSeed(1234);
+                    Engine.getEngine(TestUtils.getEngine()).setRandomSeed(1234);
                     trainer.initialize(inputShape);
                     NDManager manager = trainer.getManager();
                     NDArray data =
@@ -590,12 +950,11 @@ public class BlockCoreTest {
     @SuppressWarnings("try")
     @Test
     public void testGRU() throws IOException, MalformedModelException {
-
         Loss loss = new SoftmaxCrossEntropyLoss("SmCeLoss", 1, -1, false, true);
         TrainingConfig config =
                 new DefaultTrainingConfig(loss)
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT)
-                        .optDevices(TestUtils.getDevices());
+                        .optDevices(TestUtils.getDevices(Integer.MAX_VALUE));
         GRU block =
                 GRU.builder()
                         .setStateSize(4)
@@ -603,14 +962,15 @@ public class BlockCoreTest {
                         .optBatchFirst(true)
                         .optReturnState(false)
                         .build();
-        try (Model model = Model.newInstance("model", config.getDevices()[0])) {
+        try (Model model =
+                Model.newInstance("model", config.getDevices()[0], TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
                 // the unused GradientCollector is for BatchNorm to know it is on training mode
                 try (GradientCollector collector = trainer.newGradientCollector()) {
                     Shape inputShape = new Shape(1, 2, 4);
-                    Engine.getInstance().setRandomSeed(1234);
+                    Engine.getEngine(TestUtils.getEngine()).setRandomSeed(1234);
                     trainer.initialize(inputShape);
                     NDManager manager = trainer.getManager();
                     NDArray data =
@@ -668,7 +1028,7 @@ public class BlockCoreTest {
         block.removeLastBlock();
         Assert.assertEquals(block.getChildren().size(), 4);
 
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -705,7 +1065,7 @@ public class BlockCoreTest {
         Assert.assertEquals(block.getDirectParameters().size(), 0);
         Assert.assertEquals(block.getParameters().size(), 4);
 
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(block);
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -728,11 +1088,14 @@ public class BlockCoreTest {
     private void testEncode(NDManager manager, Block block)
             throws IOException, MalformedModelException {
         PairList<String, Parameter> original = block.getParameters();
-        File temp = File.createTempFile("block", ".param");
-        DataOutputStream os = new DataOutputStream(Files.newOutputStream(temp.toPath()));
-        block.saveParameters(os);
-        block.loadParameters(manager, new DataInputStream(Files.newInputStream(temp.toPath())));
-        Files.delete(temp.toPath());
+        Path temp = Files.createTempFile("block", ".param");
+        try (DataOutputStream os = new DataOutputStream(Files.newOutputStream(temp))) {
+            block.saveParameters(os);
+        }
+        try (DataInputStream is = new DataInputStream(Files.newInputStream(temp))) {
+            block.loadParameters(manager, is);
+        }
+        Files.delete(temp);
         PairList<String, Parameter> loaded = block.getParameters();
         int bound = original.size();
         for (int idx = 0; idx < bound; idx++) {

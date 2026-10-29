@@ -12,7 +12,6 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.basicdataset.nlp.TatoebaEnglishFrenchDataset;
 import ai.djl.basicdataset.nlp.TextDataset;
@@ -29,6 +28,7 @@ import ai.djl.modality.nlp.preprocess.PunctuationSeparator;
 import ai.djl.modality.nlp.preprocess.SimpleTokenizer;
 import ai.djl.modality.nlp.preprocess.TextTerminator;
 import ai.djl.modality.nlp.preprocess.TextTruncator;
+import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
 import ai.djl.nn.recurrent.LSTM;
@@ -44,6 +44,7 @@ import ai.djl.training.loss.MaskedSoftmaxCrossEntropyLoss;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.PaddingStackBatchifier;
 import ai.djl.translate.TranslateException;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Locale;
@@ -65,7 +66,7 @@ public final class TrainSeq2Seq {
         }
 
         ExecutorService executorService = Executors.newFixedThreadPool(8);
-        try (Model model = Model.newInstance("seq2seqMTEn-Fr")) {
+        try (Model model = Model.newInstance("seq2seqMTEn-Fr", arguments.getEngine())) {
             // get training and validation dataset
             TextDataset trainingSet = getDataset(Dataset.Usage.TRAIN, arguments, null, null);
             // Fetch TextEmbedding from dataset
@@ -149,8 +150,8 @@ public final class TrainSeq2Seq {
                 });
 
         return new DefaultTrainingConfig(new MaskedSoftmaxCrossEntropyLoss())
-                .addEvaluator(new Accuracy("Accuracy", 0, 2))
-                .optDevices(Device.getDevices(arguments.getMaxGpus()))
+                .addEvaluator(new Accuracy("Accuracy", 2))
+                .optDevices(arguments.getMaxGpus())
                 .optExecutorService(executorService)
                 .addTrainingListeners(TrainingListener.Defaults.logging(outputDir))
                 .addTrainingListeners(listener);
@@ -178,6 +179,7 @@ public final class TrainSeq2Seq {
                                         .addPad(0, 0, (m) -> m.ones(new Shape(1)), 10)
                                         .build())
                         .optUsage(usage)
+                        .optManager(NDManager.newBaseManager(arguments.getEngine()))
                         .optPrefetchNumber(8)
                         .optLimit(limit);
         Configuration sourceConfig =

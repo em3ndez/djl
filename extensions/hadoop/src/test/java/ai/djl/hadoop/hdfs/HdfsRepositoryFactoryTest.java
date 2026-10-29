@@ -12,23 +12,24 @@
  */
 package ai.djl.hadoop.hdfs;
 
+import ai.djl.repository.Repository;
+
 import org.testng.annotations.Test;
+
+import java.net.URI;
 
 public class HdfsRepositoryFactoryTest {
 
     @Test(expectedExceptions = IllegalArgumentException.class)
     public void testUnsupportedProtocol() {
         HdfsRepositoryFactory factory = new HdfsRepositoryFactory();
-        factory.newInstance("hdfs", "https://djl-not-exists/");
+        factory.newInstance("hdfs", URI.create("https://djl-not-exists/"));
     }
 
     @Test
     public void testHdfsRepositoryFactory() {
-        HdfsRepositoryFactory factory = new HdfsRepositoryFactory();
-        factory.newInstance("hdfs", "hdfs://localhost:6543?artifact_id=mlp&model_name=mlp");
-
-        factory.newInstance("hdfs", "hdfs://localhost:6543");
-
-        factory.newInstance("hdfs", "hdfs://localhost:6543/?model_name=mlp");
+        Repository.newInstance("hdfs", "hdfs://localhost:6543?artifact_id=mlp&model_name=mlp");
+        Repository.newInstance("hdfs", "hdfs://localhost:6543");
+        Repository.newInstance("hdfs", "hdfs://localhost:6543/?model_name=mlp");
     }
 }

@@ -14,6 +14,7 @@ package ai.djl.repository;
 
 import ai.djl.Application;
 import ai.djl.util.Progress;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -30,7 +31,7 @@ import java.util.Map;
  * Unlike in Maven, the data doesn't need to be located within the repository. Instead, the
  * repository only stores metadata including the URL and checksum of the actual data. When the
  * artifact is prepared, the data is downloaded, checked, and then stored in the {@code
- * ~/.djo-ai/cache} folder.
+ * ~/.djl.ai/cache} folder.
  *
  * <p>The artifacts are first divided into a number of {@link Metadata} files that can each have
  * multiple artifacts. The metadata files are identified by an {@link MRL} which contains:
@@ -75,7 +76,7 @@ public interface Repository {
      * @return the new repository
      */
     static Repository newInstance(String name, Path path) {
-        return RepositoryFactoryImpl.getFactory().newInstance(name, path.toUri().toString());
+        return RepositoryFactoryImpl.getFactory().newInstance(name, path.toUri());
     }
 
     /**
@@ -86,7 +87,7 @@ public interface Repository {
      * @return the new repository
      */
     static Repository newInstance(String name, String url) {
-        return RepositoryFactoryImpl.getFactory().newInstance(name, url);
+        return RepositoryFactoryImpl.getFactory().newInstance(name, URI.create(url));
     }
 
     /**
@@ -96,6 +97,76 @@ public interface Repository {
      */
     static void registerRepositoryFactory(RepositoryFactory factory) {
         RepositoryFactoryImpl.registerRepositoryFactory(factory);
+    }
+
+    /**
+     * Creates a model {@code MRL} with specified application.
+     *
+     * @param application the desired application
+     * @param groupId the desired groupId
+     * @param artifactId the desired artifactId
+     * @return a model {@code MRL}
+     */
+    default MRL model(Application application, String groupId, String artifactId) {
+        return model(application, groupId, artifactId, null, null);
+    }
+
+    /**
+     * Creates a model {@code MRL} with specified application.
+     *
+     * @param application the desired application
+     * @param groupId the desired groupId
+     * @param artifactId the desired artifactId
+     * @param version the resource version
+     * @return a model {@code MRL}
+     */
+    default MRL model(Application application, String groupId, String artifactId, String version) {
+        return MRL.model(this, application, groupId, artifactId, version, null);
+    }
+
+    /**
+     * Creates a model {@code MRL} with specified application.
+     *
+     * @param application the desired application
+     * @param groupId the desired groupId
+     * @param artifactId the desired artifactId
+     * @param version the resource version
+     * @param artifactName the desired artifact name
+     * @return a model {@code MRL}
+     */
+    default MRL model(
+            Application application,
+            String groupId,
+            String artifactId,
+            String version,
+            String artifactName) {
+        return MRL.model(this, application, groupId, artifactId, version, artifactName);
+    }
+
+    /**
+     * Creates a dataset {@code MRL} with specified application.
+     *
+     * @param application the desired application
+     * @param groupId the desired groupId
+     * @param artifactId the desired artifactId
+     * @return a dataset {@code MRL}
+     */
+    default MRL dataset(Application application, String groupId, String artifactId) {
+        return dataset(application, groupId, artifactId, null);
+    }
+
+    /**
+     * Creates a dataset {@code MRL} with specified application.
+     *
+     * @param application the desired application
+     * @param groupId the desired groupId
+     * @param artifactId the desired artifactId
+     * @param version the resource version
+     * @return a dataset {@code MRL}
+     */
+    default MRL dataset(
+            Application application, String groupId, String artifactId, String version) {
+        return MRL.dataset(this, application, groupId, artifactId, version);
     }
 
     /**
@@ -132,12 +203,11 @@ public interface Repository {
      * Returns the artifact matching a mrl, version, and property filter.
      *
      * @param mrl the mrl to match the artifact against
-     * @param version the version of the artifact
      * @param filter the property filter
      * @return the matched artifact
      * @throws IOException if it failed to load the artifact
      */
-    Artifact resolve(MRL mrl, String version, Map<String, String> filter) throws IOException;
+    Artifact resolve(MRL mrl, Map<String, String> filter) throws IOException;
 
     /**
      * Returns an {@link InputStream} for an item in a repository.
@@ -204,7 +274,7 @@ public interface Repository {
      * @throws IOException if it failed to ensure the creation of the cache directory
      */
     default Path getResourceDirectory(Artifact artifact) throws IOException {
-        return getCacheDirectory().resolve(artifact.getResourceUri().getPath());
+        return AbstractRepository.resolveArtifactDir(getCacheDirectory(), artifact);
     }
 
     /**
@@ -216,4 +286,11 @@ public interface Repository {
      * @return a list of {@link MRL}s in the repository
      */
     List<MRL> getResources();
+
+    /**
+     * Adds resource to the repository.
+     *
+     * @param mrl the resource to add
+     */
+    void addResource(MRL mrl);
 }

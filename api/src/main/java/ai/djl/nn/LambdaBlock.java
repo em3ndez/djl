@@ -16,9 +16,11 @@ import ai.djl.MalformedModelException;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.util.function.Function;
@@ -33,9 +35,12 @@ import java.util.function.Function;
  */
 public class LambdaBlock extends AbstractBlock {
 
+    public static final String DEFAULT_NAME = "anonymous";
+
     private static final byte VERSION = 2;
 
     private Function<NDList, NDList> lambda;
+    private String name;
 
     /**
      * Creates a LambdaBlock that can apply the specified function.
@@ -43,19 +48,53 @@ public class LambdaBlock extends AbstractBlock {
      * @param lambda the function to apply
      */
     public LambdaBlock(Function<NDList, NDList> lambda) {
+        this(lambda, DEFAULT_NAME);
+    }
+
+    /**
+     * Creates a LambdaBlock that can apply the specified function.
+     *
+     * @param lambda the function to apply
+     * @param name the function name
+     */
+    public LambdaBlock(Function<NDList, NDList> lambda, String name) {
         super(VERSION);
         this.lambda = lambda;
+        this.name = name;
+    }
+
+    /**
+     * Returns the lambda function name.
+     *
+     * @return the lambda function name
+     */
+    public String getName() {
+        return name;
     }
 
     /**
      * Creates a {@link LambdaBlock} for a singleton function.
      *
-     * @param lambda a function accepting a singleton {@link NDList} and returning another sinleton
+     * @param lambda a function accepting a singleton {@link NDList} and returning another singleton
      *     {@link NDList}
      * @return a new {@link LambdaBlock} for the function
      */
     public static LambdaBlock singleton(Function<NDArray, NDArray> lambda) {
-        return new LambdaBlock(arrays -> new NDList(lambda.apply(arrays.singletonOrThrow())));
+        return new LambdaBlock(
+                arrays -> new NDList(lambda.apply(arrays.singletonOrThrow())),
+                lambda.getClass().getSimpleName());
+    }
+
+    /**
+     * Creates a {@link LambdaBlock} for a singleton function.
+     *
+     * @param lambda a function accepting a singleton {@link NDList} and returning another singleton
+     *     {@link NDList}
+     * @param name the function name
+     * @return a new {@link LambdaBlock} for the function
+     */
+    public static LambdaBlock singleton(Function<NDArray, NDArray> lambda, String name) {
+        return new LambdaBlock(arrays -> new NDList(lambda.apply(arrays.singletonOrThrow())), name);
     }
 
     /** {@inheritDoc} */
@@ -78,9 +117,12 @@ public class LambdaBlock extends AbstractBlock {
             }
             NDList output = lambda.apply(input);
             Shape[] outputShapes = new Shape[output.size()];
+            DataType[] dataTypes = new DataType[output.size()];
             for (int i = 0; i < output.size(); ++i) {
                 outputShapes[i] = output.get(i).getShape();
+                dataTypes[i] = output.get(i).getDataType();
             }
+            outputDataTypes = dataTypes;
             return outputShapes;
         }
     }
@@ -95,11 +137,5 @@ public class LambdaBlock extends AbstractBlock {
         } else if (version != 1) {
             throw new MalformedModelException("Unsupported encoding version: " + version);
         }
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public String toString() {
-        return "Lambda()";
     }
 }

@@ -13,9 +13,9 @@
 
 package ai.djl.integration.tests.model_zoo.classification;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.basicmodelzoo.cv.classification.SqueezeNet;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
@@ -32,17 +32,19 @@ import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
 import ai.djl.translate.Batchifier;
 import ai.djl.util.PairList;
+
 import org.testng.annotations.Test;
 
 public class SqueezenetTest {
+
     @Test
     public void testTrain() {
         TrainingConfig config =
                 new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
-                        .optDevices(Device.getDevices(2))
+                        .optDevices(TestUtils.getDevices(2))
                         .optInitializer(Initializer.ONES, Parameter.Type.WEIGHT);
         Block squeezeNet = SqueezeNet.squeezenet(10);
-        try (Model model = Model.newInstance("squeezenet")) {
+        try (Model model = Model.newInstance("squeezenet", TestUtils.getEngine())) {
             model.setBlock(squeezeNet);
             try (Trainer trainer = model.newTrainer(config)) {
                 int batchSize = 1;

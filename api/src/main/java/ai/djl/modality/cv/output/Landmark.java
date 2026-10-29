@@ -12,6 +12,10 @@
  */
 package ai.djl.modality.cv.output;
 
+import ai.djl.util.JsonUtils;
+
+import com.google.gson.JsonObject;
+
 import java.util.List;
 
 /** {@code Landmark} is the container that stores the key points for landmark on a single face. */
@@ -19,6 +23,7 @@ public class Landmark extends Rectangle {
 
     private static final long serialVersionUID = 1L;
 
+    @SuppressWarnings("serial")
     private List<Point> points;
 
     /**
@@ -39,5 +44,13 @@ public class Landmark extends Rectangle {
     @Override
     public Iterable<Point> getPath() {
         return points;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public JsonObject serialize() {
+        JsonObject ret = super.serialize();
+        ret.add("landmarks", JsonUtils.GSON.toJsonTree(points));
+        return ret;
     }
 }

@@ -14,12 +14,20 @@ package ai.djl.repository.zoo;
 
 import ai.djl.Application;
 import ai.djl.MalformedModelException;
-import ai.djl.repository.Artifact;
+import ai.djl.repository.MRL;
+import ai.djl.util.Progress;
+
 import java.io.IOException;
-import java.util.List;
 
 /** A ModelLoader loads a particular {@link ZooModel} from a Repository for a model zoo. */
 public interface ModelLoader {
+
+    /**
+     * Returns the group ID of the {@code ModelLoader}.
+     *
+     * @return the group ID of the {@code ModelLoader}
+     */
+    String getGroupId();
 
     /**
      * Returns the artifact ID of the {@code ModelLoader}.
@@ -36,6 +44,13 @@ public interface ModelLoader {
     Application getApplication();
 
     /**
+     * Returns the {@link MRL} of the {@code ModelLoader}.
+     *
+     * @return the {@link MRL} of the {@code ModelLoader}
+     */
+    MRL getMrl();
+
+    /**
      * Loads the model with the given criteria.
      *
      * @param <I> the input data type
@@ -50,11 +65,27 @@ public interface ModelLoader {
             throws IOException, ModelNotFoundException, MalformedModelException;
 
     /**
-     * Returns a list of the available artifacts that can be loaded.
+     * Returns {@code true} if the model is downloaded in local directory.
      *
-     * @return a list of the available artifacts that can be loaded
-     * @throws IOException for errors reading the artifact list
-     * @throws ModelNotFoundException if models with the mrl defined within this loader are found
+     * @param <I> the input data type
+     * @param <O> the output data type
+     * @param criteria the criteria to match against the loaded model
+     * @return {@code true} if the model is downloaded in local directory
+     * @throws IOException for various exceptions loading data from the repository
+     * @throws ModelNotFoundException if no model with the specified criteria is found
      */
-    List<Artifact> listModels() throws IOException, ModelNotFoundException;
+    <I, O> boolean isDownloaded(Criteria<I, O> criteria) throws IOException, ModelNotFoundException;
+
+    /**
+     * Downloads the model artifacts to local directory.
+     *
+     * @param <I> the input data type
+     * @param <O> the output data type
+     * @param criteria the criteria to match against the loaded model
+     * @param progress the progress tracker
+     * @throws IOException for various exceptions loading data from the repository
+     * @throws ModelNotFoundException if no model with the specified criteria is found
+     */
+    <I, O> void downloadModel(Criteria<I, O> criteria, Progress progress)
+            throws IOException, ModelNotFoundException;
 }

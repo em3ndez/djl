@@ -13,6 +13,7 @@
 package ai.djl.training;
 
 import ai.djl.Device;
+import ai.djl.engine.Engine;
 import ai.djl.nn.Parameter;
 import ai.djl.training.evaluator.Evaluator;
 import ai.djl.training.initializer.Initializer;
@@ -21,8 +22,10 @@ import ai.djl.training.loss.Loss;
 import ai.djl.training.optimizer.Adam;
 import ai.djl.training.optimizer.Optimizer;
 import ai.djl.util.PairList;
+
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ForkJoinPool;
@@ -47,8 +50,8 @@ public class DefaultTrainingConfig implements TrainingConfig {
      * @param loss the loss to use for training
      */
     public DefaultTrainingConfig(Loss loss) {
-        optimizer = Adam.builder().build();
         this.loss = loss;
+        optimizer = Adam.builder().build();
         evaluators = new ArrayList<>();
         listeners = new ArrayList<>();
     }
@@ -136,6 +139,18 @@ public class DefaultTrainingConfig implements TrainingConfig {
     }
 
     /**
+     * Adds multiple {@link Evaluator}s that needs to be computed during training.
+     *
+     * @param evaluators the evaluators to be added
+     * @param <T> the type of evaluator to be added
+     * @return this {@code DefaultTrainingConfig}
+     */
+    public <T extends Evaluator> DefaultTrainingConfig addEvaluators(Collection<T> evaluators) {
+        evaluators.forEach(this::addEvaluator);
+        return this;
+    }
+
+    /**
      * Adds an {@link Evaluator} that needs to be computed during training.
      *
      * @param evaluator the evaluator to be added
@@ -161,7 +176,7 @@ public class DefaultTrainingConfig implements TrainingConfig {
     @Override
     public Device[] getDevices() {
         if (devices == null) {
-            return Device.getDevices();
+            return Engine.getInstance().getDevices();
         }
         return devices;
     }
@@ -184,6 +199,7 @@ public class DefaultTrainingConfig implements TrainingConfig {
         return loss;
     }
 
+    /** {@inheritDoc} */
     @Override
     public ExecutorService getExecutorService() {
         return executorService;

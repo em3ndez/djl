@@ -17,6 +17,7 @@ import ai.djl.metric.Metrics;
 import ai.djl.ndarray.NDList;
 import ai.djl.training.Trainer;
 import ai.djl.training.evaluator.Evaluator;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -143,9 +144,7 @@ public class EvaluatorTrainingListener extends TrainingListenerAdapter {
             for (Device device : batchData.getLabels().keySet()) {
                 NDList labels = batchData.getLabels().get(device);
                 NDList predictions = batchData.getPredictions().get(device);
-                for (String accumulator : accumulators) {
-                    evaluator.updateAccumulator(accumulator, labels, predictions);
-                }
+                evaluator.updateAccumulators(accumulators, labels, predictions);
             }
         }
     }

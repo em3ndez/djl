@@ -12,7 +12,6 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.basicdataset.cv.PikachuDetection;
@@ -46,6 +45,7 @@ import ai.djl.training.loss.SingleShotDetectionLoss;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -76,7 +76,7 @@ public final class TrainPikachu {
             return null;
         }
 
-        try (Model model = Model.newInstance("pikachu-ssd")) {
+        try (Model model = Model.newInstance("pikachu-ssd", arguments.getEngine())) {
             model.setBlock(getSsdTrainBlock());
             RandomAccessDataset trainingSet = getDataset(Dataset.Usage.TRAIN, arguments);
             RandomAccessDataset validateSet = getDataset(Dataset.Usage.TEST, arguments);
@@ -98,7 +98,7 @@ public final class TrainPikachu {
 
     public static int predict(String outputDir, String imageFile)
             throws IOException, MalformedModelException, TranslateException {
-        try (Model model = Model.newInstance("pikachu-ssd")) {
+        try (Model model = Model.newInstance("pikachu-ssd", "PyTorch")) {
             float detectionThreshold = 0.6f;
             // load parameters back to original training block
             model.setBlock(getSsdTrainBlock());
@@ -133,7 +133,7 @@ public final class TrainPikachu {
                         .optUsage(usage)
                         .optLimit(arguments.getLimit())
                         .optPipeline(pipeline)
-                        .setSampling(arguments.getBatchSize(), true)
+                        .setSampling(1, true)
                         .build();
         pikachuDetection.prepare(new ProgressBar());
 
@@ -155,7 +155,7 @@ public final class TrainPikachu {
         return new DefaultTrainingConfig(new SingleShotDetectionLoss())
                 .addEvaluator(new SingleShotDetectionAccuracy("classAccuracy"))
                 .addEvaluator(new BoundingBoxError("boundingBoxError"))
-                .optDevices(Device.getDevices(arguments.getMaxGpus()))
+                .optDevices(arguments.getMaxGpus())
                 .addTrainingListeners(TrainingListener.Defaults.logging(outputDir))
                 .addTrainingListeners(listener);
     }

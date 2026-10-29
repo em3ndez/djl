@@ -12,7 +12,6 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
 import ai.djl.Model;
 import ai.djl.basicdataset.cv.classification.Mnist;
 import ai.djl.basicmodelzoo.basic.Mlp;
@@ -33,11 +32,13 @@ import ai.djl.training.listener.TrainingListener;
 import ai.djl.training.loss.Loss;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.TranslateException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Arrays;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public final class TrainWithHpo {
 
@@ -81,7 +82,7 @@ public final class TrainWithHpo {
 
             return new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
                     .addEvaluator(new Accuracy())
-                    .optDevices(Device.getDevices(arguments.getMaxGpus()))
+                    .optDevices(arguments.getMaxGpus())
                     .addTrainingListeners(TrainingListener.Defaults.logging(outputDir))
                     .addTrainingListeners(listener);
         }
@@ -114,7 +115,7 @@ public final class TrainWithHpo {
 
             Block block =
                     new Mlp(Mnist.IMAGE_HEIGHT * Mnist.IMAGE_WIDTH, Mnist.NUM_CLASSES, hidden);
-            Model model = Model.newInstance("mlp");
+            Model model = Model.newInstance("mlp", arguments.getEngine());
             model.setBlock(block);
             return model;
         }

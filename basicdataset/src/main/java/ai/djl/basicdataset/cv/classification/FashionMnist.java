@@ -23,33 +23,37 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.repository.Artifact;
 import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
 import ai.djl.training.dataset.ArrayDataset;
 import ai.djl.translate.Pipeline;
 import ai.djl.util.Progress;
 import ai.djl.util.Utils;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.Map;
 
 /**
  * FashMnist is a dataset from Zalando article images
- * https://github.com/zalandoresearch/fashion-mnist.
+ * (https://github.com/zalandoresearch/fashion-mnist).
  *
- * <p>Each sample is an image (in 3-D NDArray) with shape (28, 28, 1).
+ * <p>Each sample is a grayscale image (in 3-D NDArray) with shape (28, 28, 1).
+ *
+ * <p>It was created to be a drop in replacement for {@link Mnist}, but have a less simplistic task.
  */
 public final class FashionMnist extends ArrayDataset {
+
+    private static final String ARTIFACT_ID = "fashmnist";
+    private static final String VERSION = "1.0";
 
     public static final int IMAGE_WIDTH = 28;
     public static final int IMAGE_HEIGHT = 28;
     public static final int NUM_CLASSES = 10;
 
-    private static final String ARTIFACT_ID = "fashmnist";
-
     private final NDManager manager;
     private final Usage usage;
 
-    private Resource resource;
+    private MRL mrl;
     private boolean prepared;
 
     /**
@@ -62,8 +66,7 @@ public final class FashionMnist extends ArrayDataset {
         this.manager = builder.manager;
         this.manager.setName("fashionmnist");
         this.usage = builder.usage;
-        MRL mrl = MRL.dataset(CV.ANY, builder.groupId, builder.artifactId);
-        resource = new Resource(builder.repository, mrl, "1.0");
+        mrl = builder.getMrl();
     }
 
     /**
@@ -82,8 +85,8 @@ public final class FashionMnist extends ArrayDataset {
             return;
         }
 
-        Artifact artifact = resource.getDefaultArtifact();
-        resource.prepare(artifact, progress);
+        Artifact artifact = mrl.getDefaultArtifact();
+        mrl.prepare(artifact, progress);
 
         Map<String, Artifact.Item> map = artifact.getFiles();
         Artifact.Item imageItem;
@@ -108,7 +111,7 @@ public final class FashionMnist extends ArrayDataset {
     }
 
     private NDArray readData(Artifact.Item item, long length) throws IOException {
-        try (InputStream is = resource.getRepository().openStream(item, null)) {
+        try (InputStream is = mrl.getRepository().openStream(item, null)) {
             if (is.skip(16) != 16) {
                 throw new AssertionError("Failed skip data.");
             }
@@ -116,22 +119,23 @@ public final class FashionMnist extends ArrayDataset {
             byte[] buf = Utils.toByteArray(is);
             try (NDArray array =
                     manager.create(
-                            new Shape(length, IMAGE_WIDTH, IMAGE_HEIGHT, 1), DataType.UINT8)) {
-                array.set(buf);
+                            ByteBuffer.wrap(buf),
+                            new Shape(length, IMAGE_WIDTH, IMAGE_HEIGHT, 1),
+                            DataType.UINT8)) {
                 return array.toType(DataType.FLOAT32, false);
             }
         }
     }
 
     private NDArray readLabel(Artifact.Item item) throws IOException {
-        try (InputStream is = resource.getRepository().openStream(item, null)) {
+        try (InputStream is = mrl.getRepository().openStream(item, null)) {
             if (is.skip(8) != 8) {
                 throw new AssertionError("Failed skip data.");
             }
 
             byte[] buf = Utils.toByteArray(is);
-            try (NDArray array = manager.create(new Shape(buf.length), DataType.UINT8)) {
-                array.set(buf);
+            try (NDArray array =
+                    manager.create(ByteBuffer.wrap(buf), new Shape(buf.length), DataType.UINT8)) {
                 return array.toType(DataType.FLOAT32, false);
             }
         }
@@ -233,6 +237,10 @@ public final class FashionMnist extends ArrayDataset {
                 pipeline = new Pipeline(new ToTensor());
             }
             return new FashionMnist(this);
+        }
+
+        MRL getMrl() {
+            return repository.dataset(CV.ANY, groupId, artifactId, VERSION);
         }
     }
 }

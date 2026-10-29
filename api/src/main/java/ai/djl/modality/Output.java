@@ -12,50 +12,36 @@
  */
 package ai.djl.modality;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Collections;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Objects;
 
 /** A class stores the generic inference results. */
-public class Output {
+public class Output extends Input {
 
-    private String requestId;
+    private static final long serialVersionUID = 1L;
+
     private int code;
     private String message;
-    private Map<String, String> properties;
-    private byte[] content;
 
-    /**
-     * Constructs a {@code Output} with specified {@code requestId}.
-     *
-     * @param requestId the requestId of the output
-     */
-    public Output(String requestId) {
-        this.requestId = requestId;
+    /** Constructs a {@code Output} instance. */
+    public Output() {
+        this(200, "OK");
     }
 
     /**
      * Constructs a {@code Output} with specified {@code requestId}, {@code code} and {@code
      * message}.
      *
-     * @param requestId the requestId of the output
      * @param code the status code of the output
      * @param message the status message of the output
      */
-    public Output(String requestId, int code, String message) {
-        this.requestId = requestId;
+    public Output(int code, String message) {
         this.code = code;
         this.message = message;
-    }
-
-    /**
-     * Returns the requestId of the output.
-     *
-     * @return the requestId of the output
-     */
-    public String getRequestId() {
-        return requestId;
     }
 
     /**
@@ -95,63 +81,66 @@ public class Output {
     }
 
     /**
-     * Returns the properties of the output.
+     * Encodes all data in the output to a binary form.
      *
-     * @return the properties of the output
+     * @return the binary encoding
+     * @throws IOException if it fails to encode part of the data
      */
-    public Map<String, String> getProperties() {
-        if (properties == null) {
-            return Collections.emptyMap();
+    @Override
+    public byte[] encode() throws IOException {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            DataOutputStream os = new DataOutputStream(baos);
+            os.writeLong(serialVersionUID);
+            encodeInputBase(os);
+
+            os.writeInt(code);
+            os.writeUTF(message);
+
+            return baos.toByteArray();
         }
-        return properties;
     }
 
     /**
-     * Sets the properties of the output.
+     * Decodes the output from {@link #encode()}.
      *
-     * @param properties the properties of the output
+     * @param is the data to decode from
+     * @return the decoded output
+     * @throws IOException if it fails to decode part of the output
      */
-    public void setProperties(Map<String, String> properties) {
-        this.properties = properties;
-    }
+    public static Output decode(InputStream is) throws IOException {
+        try (DataInputStream dis = new DataInputStream(is)) {
+            if (serialVersionUID != dis.readLong()) {
+                throw new IllegalArgumentException("Invalid Input version");
+            }
 
-    /**
-     * Adds a property to the output.
-     *
-     * @param key key with which the specified value is to be added
-     * @param value value to be added with the specified key
-     */
-    public void addProperty(String key, String value) {
-        if (properties == null) {
-            properties = new ConcurrentHashMap<>();
+            Output output = new Output();
+            decodeInputBase(dis, output);
+
+            output.code = dis.readInt();
+            output.message = dis.readUTF();
+
+            return output;
         }
-        properties.put(key, value);
     }
 
     /**
-     * Returns the content of the input.
+     * Checks for deep equality with another output.
      *
-     * @return the content of the input
+     * @param o the other output.
+     * @return whether they and all properties, content, and data are equal
      */
-    public byte[] getContent() {
-        return content;
-    }
-
-    /**
-     * Sets the content of the input.
-     *
-     * @param content the content of the input
-     */
-    public void setContent(byte[] content) {
-        this.content = content;
-    }
-
-    /**
-     * Sets the content of the input with string value.
-     *
-     * @param content the content of the input in string
-     */
-    public void setContent(String content) {
-        this.content = content.getBytes(StandardCharsets.UTF_8);
+    @Override
+    public boolean deepEquals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        if (!super.deepEquals(o)) {
+            return false;
+        }
+        Output output = (Output) o;
+        return code == output.code && Objects.equals(message, output.message);
     }
 }

@@ -30,6 +30,7 @@ import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.pooling.Pool;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -192,12 +193,12 @@ public final class SingleShotDetection extends AbstractBlock {
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
+    public void loadMetadata(byte loadVersion, DataInputStream is)
             throws IOException, MalformedModelException {
-        if (version == VERSION) {
+        if (loadVersion == version) {
             readInputShapes(is);
-        } else if (version != 1) {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
+        } else if (loadVersion != 1) {
+            throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
     }
 

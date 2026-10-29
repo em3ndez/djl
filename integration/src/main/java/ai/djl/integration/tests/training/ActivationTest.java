@@ -13,18 +13,21 @@
 package ai.djl.integration.tests.training;
 
 import ai.djl.Model;
+import ai.djl.integration.util.TestUtils;
 import ai.djl.ndarray.NDArray;
 import ai.djl.ndarray.NDList;
 import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Activation;
 import ai.djl.nn.Parameter;
+import ai.djl.nn.core.SparseMax;
 import ai.djl.testing.Assertions;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.Trainer;
 import ai.djl.training.TrainingConfig;
 import ai.djl.training.initializer.Initializer;
 import ai.djl.training.loss.Loss;
+
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
@@ -36,7 +39,7 @@ public class ActivationTest {
 
     @Test
     public void testRelu() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.reluBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -55,7 +58,7 @@ public class ActivationTest {
 
     @Test
     public void testSigmoid() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.sigmoidBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -72,7 +75,7 @@ public class ActivationTest {
 
     @Test
     public void testTanh() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.tanhBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -89,7 +92,7 @@ public class ActivationTest {
 
     @Test
     public void testSoftPlus() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.softPlusBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -106,7 +109,7 @@ public class ActivationTest {
 
     @Test
     public void testSoftSign() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.softSignBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -123,7 +126,7 @@ public class ActivationTest {
 
     @Test
     public void testLeakyrelu() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             float alpha = 1.0f;
             model.setBlock(Activation.leakyReluBlock(alpha));
 
@@ -141,7 +144,7 @@ public class ActivationTest {
 
     @Test
     public void testElu() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             float alpha = 1.0f;
             model.setBlock(Activation.eluBlock(alpha));
 
@@ -158,7 +161,7 @@ public class ActivationTest {
 
     @Test
     public void testSelu() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.seluBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -175,7 +178,7 @@ public class ActivationTest {
 
     @Test
     public void testGelu() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.geluBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -192,7 +195,7 @@ public class ActivationTest {
 
     @Test
     public void testSwish() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             float beta = 1.0f;
             model.setBlock(Activation.swishBlock(beta));
 
@@ -210,7 +213,7 @@ public class ActivationTest {
 
     @Test
     public void testMish() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.mishBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -227,7 +230,7 @@ public class ActivationTest {
 
     @Test
     public void testPrelu() {
-        try (Model model = Model.newInstance("model")) {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
             model.setBlock(Activation.preluBlock());
 
             try (Trainer trainer = model.newTrainer(config)) {
@@ -237,6 +240,30 @@ public class ActivationTest {
                 NDArray expected = manager.create(new float[] {-1, 0, 2});
                 NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
                 Assert.assertEquals(result, expected);
+            }
+        }
+    }
+
+    @Test
+    public void testSparseMax() {
+        try (Model model = Model.newInstance("model", TestUtils.getEngine())) {
+            model.setBlock(new SparseMax());
+
+            try (Trainer trainer = model.newTrainer(config)) {
+                trainer.initialize(new Shape(4));
+                NDManager manager = trainer.getManager();
+                NDArray data = manager.create(new float[] {0, 1, 2, 3});
+                double expSum = Math.exp(1) + Math.exp(2) + Math.exp(3);
+                NDArray expected =
+                        manager.create(
+                                new float[] {
+                                    0,
+                                    (float) (Math.exp(1) / expSum),
+                                    (float) (Math.exp(2) / expSum),
+                                    (float) (Math.exp(3) / expSum)
+                                });
+                NDArray result = trainer.forward(new NDList(data)).singletonOrThrow();
+                Assertions.assertAlmostEquals(result, expected);
             }
         }
     }

@@ -13,7 +13,7 @@
 package ai.djl.modality.nlp.bert;
 
 import ai.djl.modality.nlp.NlpUtils;
-import ai.djl.modality.nlp.SimpleVocabulary;
+import ai.djl.modality.nlp.Vocabulary;
 import ai.djl.modality.nlp.preprocess.LambdaProcessor;
 import ai.djl.modality.nlp.preprocess.LowerCaseConvertor;
 import ai.djl.modality.nlp.preprocess.PunctuationSeparator;
@@ -21,6 +21,7 @@ import ai.djl.modality.nlp.preprocess.SimpleTokenizer;
 import ai.djl.modality.nlp.preprocess.TextCleaner;
 import ai.djl.modality.nlp.preprocess.TextProcessor;
 import ai.djl.modality.nlp.preprocess.UnicodeNormalizer;
+
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -36,9 +37,9 @@ import java.util.List;
  * href="https://github.com/google-research/bert/blob/master/tokenization.py#L161">Google Research
  * Bert Tokenizer</a>
  */
-public class BertFullTokenizer extends SimpleTokenizer {
+public class BertFullTokenizer extends BertTokenizer {
 
-    private SimpleVocabulary vocabulary;
+    private Vocabulary vocabulary;
     private List<TextProcessor> basicBertPreprocessors;
     private WordpieceTokenizer wordpieceTokenizer;
 
@@ -48,18 +49,18 @@ public class BertFullTokenizer extends SimpleTokenizer {
      * @param vocabulary the BERT vocabulary
      * @param lowerCase whether to convert tokens to lowercase
      */
-    public BertFullTokenizer(SimpleVocabulary vocabulary, boolean lowerCase) {
+    public BertFullTokenizer(Vocabulary vocabulary, boolean lowerCase) {
         this.vocabulary = vocabulary;
         basicBertPreprocessors = getPreprocessors(lowerCase);
         wordpieceTokenizer = new WordpieceTokenizer(vocabulary, "[UNK]", 200);
     }
 
     /**
-     * Returns the {@link SimpleVocabulary} used for tokenization.
+     * Returns the {@link Vocabulary} used for tokenization.
      *
-     * @return the {@link SimpleVocabulary} used for tokenization
+     * @return the {@link Vocabulary} used for tokenization
      */
-    public SimpleVocabulary getVocabulary() {
+    public Vocabulary getVocabulary() {
         return vocabulary;
     }
 
@@ -71,6 +72,12 @@ public class BertFullTokenizer extends SimpleTokenizer {
             tokens = processor.preprocess(tokens);
         }
         return wordpieceTokenizer.preprocess(tokens);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public String buildSentence(List<String> tokens) {
+        return String.join(" ", tokens).replace(" ##", "").trim();
     }
 
     /**

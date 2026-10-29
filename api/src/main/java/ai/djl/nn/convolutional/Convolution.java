@@ -23,6 +23,7 @@ import ai.djl.nn.Block;
 import ai.djl.nn.Parameter;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.IOException;
 
@@ -88,6 +89,7 @@ public abstract class Convolution extends AbstractBlock {
      *
      * @param builder the {@code Builder} that has the necessary configurations
      */
+    @SuppressWarnings("this-escape")
     public Convolution(ConvolutionBuilder<?> builder) {
         super(VERSION);
         kernelShape = builder.kernelShape;
@@ -186,13 +188,76 @@ public abstract class Convolution extends AbstractBlock {
 
     /** {@inheritDoc} */
     @Override
-    public void loadMetadata(byte version, DataInputStream is)
+    public void loadMetadata(byte loadVersion, DataInputStream is)
             throws IOException, MalformedModelException {
-        if (version == VERSION) {
+        if (loadVersion == version) {
             readInputShapes(is);
-        } else if (version != 1) {
-            throw new MalformedModelException("Unsupported encoding version: " + version);
+        } else if (loadVersion != 1) {
+            throw new MalformedModelException("Unsupported encoding version: " + loadVersion);
         }
+    }
+
+    /**
+     * Returns the shape of the kernel.
+     *
+     * @return the shape of the kernel
+     */
+    public Shape getKernelShape() {
+        return kernelShape;
+    }
+
+    /**
+     * Returns the stride of the convolution.
+     *
+     * @return the stride of the convolution
+     */
+    public Shape getStride() {
+        return stride;
+    }
+
+    /**
+     * Returns the padding along each dimension.
+     *
+     * @return the padding along each dimension
+     */
+    public Shape getPadding() {
+        return padding;
+    }
+
+    /**
+     * Returns the dilation along each dimension.
+     *
+     * @return the dilation along each dimension
+     */
+    public Shape getDilation() {
+        return dilation;
+    }
+
+    /**
+     * Returns the required number of filters.
+     *
+     * @return the required number of filters
+     */
+    public int getFilters() {
+        return filters;
+    }
+
+    /**
+     * Returns the number of group partitions.
+     *
+     * @return the number of group partitions
+     */
+    public int getGroups() {
+        return groups;
+    }
+
+    /**
+     * Returns whether to include a bias vector.
+     *
+     * @return whether to include a bias vector
+     */
+    public boolean isIncludeBias() {
+        return includeBias;
     }
 
     /**
@@ -220,6 +285,7 @@ public abstract class Convolution extends AbstractBlock {
         return input.getNDArrayInternal()
                 .convolution(input, weight, bias, stride, padding, dilation, groups);
     }
+
     /**
      * A builder that can build any {@code Convolution} block.
      *

@@ -19,13 +19,20 @@ import ai.djl.ndarray.internal.NDFormat;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.ndarray.types.SparseFormat;
+import ai.djl.util.Float16Utils;
+
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.DoubleBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.nio.ShortBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import java.util.stream.LongStream;
@@ -40,7 +47,7 @@ import java.util.stream.LongStream;
  * href="https://github.com/deepjavalibrary/djl/blob/master/docs/development/memory_management.md">NDArray
  * Memory Management Guide</a>
  */
-public interface NDArray extends NDResource {
+public interface NDArray extends NDResource, BytesSupplier {
 
     /**
      * Decodes {@code NDArray} from bytes.
@@ -218,6 +225,25 @@ public interface NDArray extends NDResource {
         return getShape().size();
     }
 
+    /** {@inheritDoc} */
+    @Override
+    default ByteBuffer toByteBuffer() {
+        return toByteBuffer(false);
+    }
+
+    /**
+     * Returns the {@code ByteBuffer} presentation of the object.
+     *
+     * <p>If returned ByteBuffer is a DirectByteBuffer, it shared the same native memory as the
+     * NDArray. The native memory will be deleted when NDArray is closed.
+     *
+     * <p>Not all the engine support return DirectByteBuffer.
+     *
+     * @param tryDirect use DirectBuffer if possible
+     * @return the {@code ByteBuffer} presentation of the object
+     */
+    ByteBuffer toByteBuffer(boolean tryDirect);
+
     /**
      * Converts this {@code NDArray} to a double array.
      *
@@ -229,7 +255,7 @@ public interface NDArray extends NDResource {
             throw new IllegalStateException(
                     "DataType mismatch, Required double" + " Actual " + getDataType());
         }
-        DoubleBuffer db = toByteBuffer().asDoubleBuffer();
+        DoubleBuffer db = toByteBuffer(true).asDoubleBuffer();
         double[] ret = new double[db.remaining()];
         db.get(ret);
         return ret;
@@ -242,13 +268,51 @@ public interface NDArray extends NDResource {
      * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
      */
     default float[] toFloatArray() {
-        if (getDataType() != DataType.FLOAT32) {
+        if (getDataType() == DataType.FLOAT16) {
+            return Float16Utils.fromByteBuffer(toByteBuffer());
+        } else if (getDataType() != DataType.FLOAT32) {
             throw new IllegalStateException(
                     "DataType mismatch, Required float, Actual " + getDataType());
         }
-        FloatBuffer fb = toByteBuffer().asFloatBuffer();
+        FloatBuffer fb = toByteBuffer(true).asFloatBuffer();
         float[] ret = new float[fb.remaining()];
         fb.get(ret);
+        return ret;
+    }
+
+    /**
+     * Converts this {@code NDArray} to an short array.
+     *
+     * @return an int array
+     * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
+     */
+    default short[] toShortArray() {
+        if (getDataType() != DataType.INT16) {
+            throw new IllegalStateException(
+                    "DataType mismatch, Required int" + " Actual " + getDataType());
+        }
+        ShortBuffer ib = toByteBuffer(true).asShortBuffer();
+        short[] ret = new short[ib.remaining()];
+        ib.get(ret);
+        return ret;
+    }
+
+    /**
+     * Converts this {@code NDArray} to an short array.
+     *
+     * @return an int array
+     * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
+     */
+    default int[] toUnsignedShortArray() {
+        if (getDataType() != DataType.UINT16) {
+            throw new IllegalStateException(
+                    "DataType mismatch, Required int" + " Actual " + getDataType());
+        }
+        ShortBuffer ib = toByteBuffer(true).asShortBuffer();
+        int[] ret = new int[ib.remaining()];
+        for (int i = 0; i < ret.length; ++i) {
+            ret[i] = ib.get() & 0xffff;
+        }
         return ret;
     }
 
@@ -259,13 +323,33 @@ public interface NDArray extends NDResource {
      * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
      */
     default int[] toIntArray() {
-        if (getDataType() != DataType.INT32) {
+        DataType dType = getDataType();
+        if (dType != DataType.INT32 && dType != DataType.UINT32) {
             throw new IllegalStateException(
                     "DataType mismatch, Required int" + " Actual " + getDataType());
         }
-        IntBuffer ib = toByteBuffer().asIntBuffer();
+        IntBuffer ib = toByteBuffer(true).asIntBuffer();
         int[] ret = new int[ib.remaining()];
         ib.get(ret);
+        return ret;
+    }
+
+    /**
+     * Converts this {@code NDArray} to an unsigned int array.
+     *
+     * @return a long array
+     * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
+     */
+    default long[] toUnsignedIntArray() {
+        if (getDataType() != DataType.UINT32) {
+            throw new IllegalStateException(
+                    "DataType mismatch, Required int" + " Actual " + getDataType());
+        }
+        IntBuffer ib = toByteBuffer(true).asIntBuffer();
+        long[] ret = new long[ib.remaining()];
+        for (int i = 0; i < ret.length; ++i) {
+            ret[i] = ib.get() & 0X00000000FFFFFFFFL;
+        }
         return ret;
     }
 
@@ -280,7 +364,7 @@ public interface NDArray extends NDResource {
             throw new IllegalStateException(
                     "DataType mismatch, Required long" + " Actual " + getDataType());
         }
-        LongBuffer lb = toByteBuffer().asLongBuffer();
+        LongBuffer lb = toByteBuffer(true).asLongBuffer();
         long[] ret = new long[lb.remaining()];
         lb.get(ret);
         return ret;
@@ -293,8 +377,8 @@ public interface NDArray extends NDResource {
      * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
      */
     default byte[] toByteArray() {
-        ByteBuffer bb = toByteBuffer();
-        if (bb.hasArray()) {
+        ByteBuffer bb = toByteBuffer(true);
+        if (bb.hasArray() && bb.remaining() == bb.array().length) {
             return bb.array();
         }
         byte[] buf = new byte[bb.remaining()];
@@ -309,7 +393,7 @@ public interface NDArray extends NDResource {
      * @throws IllegalStateException when {@link DataType} of this {@code NDArray} mismatches
      */
     default int[] toUint8Array() {
-        ByteBuffer bb = toByteBuffer();
+        ByteBuffer bb = toByteBuffer(true);
         int[] buf = new int[bb.remaining()];
         for (int i = 0; i < buf.length; ++i) {
             buf[i] = bb.get() & 0xff;
@@ -328,7 +412,7 @@ public interface NDArray extends NDResource {
             throw new IllegalStateException(
                     "DataType mismatch, Required boolean" + " Actual " + getDataType());
         }
-        ByteBuffer bb = toByteBuffer();
+        ByteBuffer bb = toByteBuffer(true);
         boolean[] ret = new boolean[bb.remaining()];
         for (int i = 0; i < ret.length; ++i) {
             ret[i] = bb.get() != 0;
@@ -343,15 +427,29 @@ public interface NDArray extends NDResource {
      *
      * @return Array of Strings
      */
-    String[] toStringArray();
+    default String[] toStringArray() {
+        return toStringArray(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Converts this {@code NDArray} to a String array with the specified charset.
+     *
+     * <p>This method is only applicable to the String typed NDArray and not for printing purpose
+     *
+     * @param charset to charset for the string
+     * @return Array of Strings
+     */
+    String[] toStringArray(Charset charset);
 
     /**
      * Converts this {@code NDArray} to a Number array based on its {@link DataType}.
      *
      * @return a Number array
      */
+    @SuppressWarnings("PMD.AvoidArrayLoops")
     default Number[] toArray() {
         switch (getDataType()) {
+            case FLOAT16:
             case FLOAT32:
                 float[] floatArray = toFloatArray();
                 return IntStream.range(0, floatArray.length)
@@ -359,9 +457,21 @@ public interface NDArray extends NDResource {
                         .toArray(Number[]::new);
             case FLOAT64:
                 return Arrays.stream(toDoubleArray()).boxed().toArray(Double[]::new);
+            case INT16:
+                short[] buf = toShortArray();
+                Short[] sbuf = new Short[buf.length];
+                for (int i = 0; i < buf.length; ++i) {
+                    sbuf[i] = buf[i];
+                }
+                return sbuf;
+            case UINT16:
+                return Arrays.stream(toUnsignedShortArray()).boxed().toArray(Integer[]::new);
             case INT32:
                 return Arrays.stream(toIntArray()).boxed().toArray(Integer[]::new);
+            case UINT32:
+                return Arrays.stream(toUnsignedIntArray()).boxed().toArray(Long[]::new);
             case INT64:
+            case UINT64:
                 return Arrays.stream(toLongArray()).boxed().toArray(Long[]::new);
             case BOOLEAN:
             case INT8:
@@ -379,18 +489,11 @@ public interface NDArray extends NDResource {
     }
 
     /**
-     * Converts this {@code NDArray} to a ByteBuffer.
-     *
-     * @return a ByteBuffer
-     */
-    ByteBuffer toByteBuffer();
-
-    /**
      * Sets this {@code NDArray} value from {@link Buffer}.
      *
-     * @param data the input buffered data
+     * @param buffer the input buffered data
      */
-    void set(Buffer data);
+    void set(Buffer buffer);
 
     /**
      * Sets this {@code NDArray} value from an array of floats.
@@ -445,7 +548,7 @@ public interface NDArray extends NDResource {
      *     index
      */
     default void set(NDIndex index, NDArray value) {
-        getNDArrayInternal().getIndexer().set(this, index, value);
+        getNDArrayInternal().getIndexer(getManager()).set(this, index, value);
     }
 
     /**
@@ -455,7 +558,7 @@ public interface NDArray extends NDResource {
      * @param value the value to replace with
      */
     default void set(NDIndex index, Number value) {
-        getNDArrayInternal().getIndexer().set(this, index, value);
+        getNDArrayInternal().getIndexer(getManager()).set(this, index, value);
     }
 
     /**
@@ -470,13 +573,13 @@ public interface NDArray extends NDResource {
     }
 
     /**
-     * Sets the {@code NDArray} by boolean mask.
+     * Sets the {@code NDArray} by boolean mask or integer index.
      *
-     * @param index the boolean {@code NDArray} that indicates what to get
+     * @param index the boolean or integer {@code NDArray} that indicates what to get
      * @param value the value to replace with
      */
     default void set(NDArray index, Number value) {
-        set(new NDIndex().addBooleanIndex(index), value);
+        set(new NDIndex("{}", index), value);
     }
 
     /**
@@ -487,7 +590,7 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the index does not correspond to a single element
      */
     default void setScalar(NDIndex index, Number value) {
-        getNDArrayInternal().getIndexer().setScalar(this, index, value);
+        getNDArrayInternal().getIndexer(getManager()).setScalar(this, index, value);
     }
 
     /**
@@ -497,7 +600,28 @@ public interface NDArray extends NDResource {
      * @return the partial {@code NDArray}
      */
     default NDArray get(NDIndex index) {
-        return getNDArrayInternal().getIndexer().get(this, index);
+        return get(getManager(), index);
+    }
+
+    /**
+     * Returns a partial {@code NDArray}.
+     *
+     * @param manager the manager used to create the arrays
+     * @param index the section of this {@code NDArray} to return
+     * @return the partial {@code NDArray}
+     */
+    default NDArray get(NDManager manager, NDIndex index) {
+        return getNDArrayInternal().getIndexer(manager).get(this, index);
+    }
+
+    /**
+     * Returns a partial {@code NDArray}.
+     *
+     * @param index the boolean or integer {@code NDArray} that indicates what to get
+     * @return the partial {@code NDArray}
+     */
+    default NDArray get(NDArray index) {
+        return get(new NDIndex("{}", index));
     }
 
     /**
@@ -527,12 +651,106 @@ public interface NDArray extends NDResource {
     /**
      * Returns a partial {@code NDArray}.
      *
-     * @param index the boolean {@code NDArray} that indicates what to get
+     * @param manager the manager used to create the arrays
+     * @param indices the indices with each index corresponding to the dimensions and negative
+     *     indices starting from the end
      * @return the partial {@code NDArray}
      */
-    default NDArray get(NDArray index) {
-        return get(new NDIndex().addBooleanIndex(index));
+    default NDArray get(NDManager manager, long... indices) {
+        return get(manager, new NDIndex(indices));
     }
+
+    /**
+     * Returns a partial {@code NDArray} pointed by the indexed array.
+     *
+     * <pre>
+     * out[i][j][k] = input[index[i][j][k]][j][k] # if axis == 0
+     * out[i][j][k] = input[i][index[i][j][k]][k] # if axis == 1
+     * out[i][j][k] = input[i][j][index[i][j][k]] # if axis == 2
+     * </pre>
+     *
+     * @param index picks the elements of an NDArray to the same position as index
+     * @param axis the entries of index are indices of axis
+     * @return the partial {@code NDArray} of the same shape as index
+     */
+    NDArray gather(NDArray index, int axis);
+
+    /**
+     * Returns a partial {@code NDArray} pointed by the indexed array.
+     *
+     * <pre>
+     * Given NDArray arr and NDArray idx. idx is the following structure:
+     * \( idx = [ idx[0, ...], idx[1, ...],..., idx[indexingDepth,...] ] \)
+     * corresponding to x, y, z index, i.e. [idx_x, idx_y, idx_z, ...].
+     * </pre>
+     *
+     * <p>So indexingDepth smaller than or equal to data.shape[0] If indexingDepth is smaller than
+     * data.shape[0], for instance, data.shape[0]=3, i.e. x,y,z but indexingDepth = 2, i.e. [idx_x,
+     * idx_y], then the tail co-rank = data.shape[0] - indexingDepth will be kept.
+     *
+     * <p>With it, the output shape = idx_y.shape appended by data.shape[indexingDepth:] <a
+     * href="https://mxnet.apache.org/versions/1.6/api/r/docs/api/mx.symbol.gather_nd.html?highlight=gather_nd">mx.symbol.gather_nd</a>
+     *
+     * @param index picks the elements of an NDArray to the same position as index
+     * @return the partial {@code NDArray} of the same shape as index
+     */
+    NDArray gatherNd(NDArray index);
+
+    /**
+     * Returns a partial {@code NDArray} pointed by index according to linear indexing, and the of
+     * output is of the same shape as index.
+     *
+     * @param index picks the elements of an NDArray and output to the same entry as in index
+     * @return the partial {@code NDArray} of the same shape as index
+     */
+    default NDArray take(NDArray index) {
+        return take(this.getManager(), index);
+    }
+
+    /**
+     * Returns a partial {@code NDArray} pointed by index according to linear indexing, and the of
+     * output is of the same shape as index.
+     *
+     * @param manager the manager used to create the arrays
+     * @param index picks the elements of an NDArray and output to the same entry as in index
+     * @return the partial {@code NDArray} of the same shape as index
+     */
+    NDArray take(NDManager manager, NDArray index);
+
+    /**
+     * Sets the entries of {@code NDArray} pointed by index, according to linear indexing, to be the
+     * numbers in value.
+     *
+     * <p>Value has to be of the same shape as index.
+     *
+     * @param index select the entries of an {@code NDArray}
+     * @param value numbers to assign to the indexed entries
+     * @return the NDArray with updated values
+     */
+    NDArray put(NDArray index, NDArray value);
+
+    /**
+     * Writes all values from the tensor value into self at the indices specified in the index
+     * tensor.
+     *
+     * <pre>
+     * This is the reverse operation of the manner described in gather().
+     *
+     * self[index[i][j][k]][j][k] = value[i][j][k] # if axis == 0
+     * self[i][index[i][j][k]][k] = value[i][j][k] # if axis == 1
+     * self[i][j][index[i][j][k]] = value[i][j][k] # if axis == 2
+     * </pre>
+     *
+     * <a
+     * href="https://pytorch.org/docs/1.13/generated/torch.Tensor.scatter_.html#torch.Tensor.scatter">torch.Tensor.scatter_</a>
+     *
+     * @param axis the axis along which to index
+     * @param index the indices of elements to scatter, can be either empty or of the same
+     *     dimensionality as value. When empty, the operation returns self unchanged
+     * @param value the source element(s) to scatter
+     * @return the NDArray with updated values
+     */
+    NDArray scatter(NDArray index, NDArray value, int axis);
 
     /**
      * Returns a scalar {@code NDArray} corresponding to a single element.
@@ -557,7 +775,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the result is not a single element
      */
     default long getLong(long... indices) {
-        return getScalar(indices).toLongArray()[0];
+        try (NDArray scalar = getScalar(indices)) {
+            return scalar.toLongArray()[0];
+        }
     }
 
     /**
@@ -568,7 +788,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the result is not a single element
      */
     default double getDouble(long... indices) {
-        return getScalar(indices).toDoubleArray()[0];
+        try (NDArray scalar = getScalar(indices)) {
+            return scalar.toDoubleArray()[0];
+        }
     }
 
     /**
@@ -579,7 +801,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the result is not a single element
      */
     default float getFloat(long... indices) {
-        return getScalar(indices).toFloatArray()[0];
+        try (NDArray scalar = getScalar(indices)) {
+            return scalar.toFloatArray()[0];
+        }
     }
 
     /**
@@ -590,7 +814,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the result is not a single element
      */
     default int getInt(long... indices) {
-        return getScalar(indices).toIntArray()[0];
+        try (NDArray scalar = getScalar(indices)) {
+            return scalar.toIntArray()[0];
+        }
     }
 
     /**
@@ -601,7 +827,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the result is not a single element
      */
     default byte getByte(long... indices) {
-        return getScalar(indices).toByteArray()[0];
+        try (NDArray scalar = getScalar(indices)) {
+            return scalar.toByteArray()[0];
+        }
     }
 
     /**
@@ -624,7 +852,9 @@ public interface NDArray extends NDResource {
      * @throws IllegalArgumentException thrown if the result is not a single element
      */
     default boolean getBoolean(long... indices) {
-        return getScalar(indices).toBooleanArray()[0];
+        try (NDArray scalar = getScalar(indices)) {
+            return scalar.toBooleanArray()[0];
+        }
     }
 
     /**
@@ -632,7 +862,9 @@ public interface NDArray extends NDResource {
      *
      * @param array this {@code NDArray} prepared to be copied to
      */
-    void copyTo(NDArray array);
+    default void copyTo(NDArray array) {
+        array.set(toByteBuffer());
+    }
 
     /**
      * Returns a copy of this {@code NDArray}.
@@ -728,7 +960,9 @@ public interface NDArray extends NDResource {
      *
      * @return a {@code NDArray} filled with zeros
      */
-    NDArray zerosLike();
+    default NDArray zerosLike() {
+        return getManager().zeros(getShape(), getDataType(), getDevice());
+    }
 
     /**
      * Returns an {@code NDArray} of ones with the same {@link Shape}, {@link DataType} and {@link
@@ -752,7 +986,9 @@ public interface NDArray extends NDResource {
      *
      * @return a {@code NDArray} filled with ones
      */
-    NDArray onesLike();
+    default NDArray onesLike() {
+        return getManager().ones(getShape(), getDataType(), getDevice());
+    }
 
     /**
      * Returns an uninitialized {@code NDArray} with the same {@link Shape}, {@link DataType} and
@@ -780,15 +1016,13 @@ public interface NDArray extends NDResource {
         return getManager().create(getShape());
     }
 
-    ////////////////////////////////////////
-    ////////////////////////////////////////
+    /*
     // Operations
-    ////////////////////////////////////////
-    ////////////////////////////////////////
+    */
 
-    ////////////////////////////////////////
+    /*
     // Operations: Element Comparison
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns {@code true} if all elements in this {@code NDArray} are equal to the {@link Number}.
@@ -1139,9 +1373,9 @@ public interface NDArray extends NDResource {
      */
     NDArray lte(NDArray other);
 
-    ////////////////////////////////////////
+    /*
     // Operations: Element Arithmetic
-    ////////////////////////////////////////
+    */
 
     /**
      * Adds a number to this {@code NDArray} element-wise.
@@ -1379,6 +1613,14 @@ public interface NDArray extends NDResource {
      * @return the result {@code NDArray}
      */
     NDArray pow(NDArray other);
+
+    /**
+     * Computes this * log(other).
+     *
+     * @param other other the other {@code NDArray}
+     * @return the result {@code NDArray}
+     */
+    NDArray xlogy(NDArray other);
 
     /**
      * Adds a number to this {@code NDArray} element-wise in place.
@@ -1736,7 +1978,7 @@ public interface NDArray extends NDResource {
     NDArray minimum(Number n);
 
     /**
-     * Returns the maximum of this {@code NDArray} and the other {@code NDArray} element-wise.
+     * Returns the minimum of this {@code NDArray} and the other {@code NDArray} element-wise.
      *
      * <p>The shapes of this {@code NDArray} and the other {@code NDArray} must be broadcastable.
      *
@@ -1758,13 +2000,13 @@ public interface NDArray extends NDResource {
      * </pre>
      *
      * @param other the {@code NDArray} to be compared
-     * @return the maximum of this {@code NDArray} and the other {@code NDArray} element-wise
+     * @return the minimum of this {@code NDArray} and the other {@code NDArray} element-wise
      */
     NDArray minimum(NDArray other);
 
-    ////////////////////////////////////////
+    /*
     // Operations: Basic Numeric
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns the numerical negative {@code NDArray} element-wise.
@@ -1944,6 +2186,23 @@ public interface NDArray extends NDResource {
     NDArray exp();
 
     /**
+     * Return the log of the absolute value of the gamma function of this {@code NDArray}
+     * element-wise.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {0.5f, 1f, 1.5f});
+     * jshell&gt; array.gammaln();
+     * ND: (2) cpu() float32
+     * [ 0.5724,  0.0000, -0.1208]
+     * </pre>
+     *
+     * @return the result {@code NDArray}
+     */
+    NDArray gammaln();
+
+    /**
      * Returns the natural logarithmic value of this {@code NDArray} element-wise.
      *
      * <p>Examples
@@ -2104,6 +2363,24 @@ public interface NDArray extends NDResource {
     NDArray atan();
 
     /**
+     * Returns the element-wise arc-tangent of this/other choosing the quadrant correctly.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray x = manager.create(new float[] {0f, 1f});
+     * jshell&gt; NDArray y = manager.create(new float[] {0f, -6f});
+     * jshell&gt; x.atan2(y);
+     * ND: (2) cpu() float64
+     * [0.    , 2.9764]
+     * </pre>
+     *
+     * @param other The other {@code NDArray}
+     * @return the result {@code NDArray}
+     */
+    NDArray atan2(NDArray other);
+
+    /**
      * Returns the hyperbolic sine of this {@code NDArray} element-wise.
      *
      * <p>sinh(x)=0.5*(exp(x) - exp(-x))
@@ -2237,9 +2514,9 @@ public interface NDArray extends NDResource {
      */
     NDArray toRadians();
 
-    ////////////////////////////////////////
+    /*
     // Operations: Reduction
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns the maximum of this {@code NDArray}.
@@ -2487,6 +2764,27 @@ public interface NDArray extends NDResource {
     NDArray sum(int[] axes, boolean keepDims);
 
     /**
+     * Returns the cumulative product of elements of input in the dimension dim. For example, if
+     * input is a vector of size N, the result will also be a vector of size N, with elements. [x1,
+     * x1 * x2, x1 * x2 *x3 ...]
+     *
+     * @param axis the axis along which to operate
+     * @return the cumulative product of this
+     */
+    NDArray cumProd(int axis);
+
+    /**
+     * Returns the cumulative product of elements of input in the dimension dim. For example, if
+     * input is a vector of size N, the result will also be a vector of size N, with elements. [x1,
+     * x1 * x2, x1 * x2 *x3 ...]
+     *
+     * @param axis the axis along which to operate
+     * @param dataType the datatype of the output
+     * @return the cumulative product of this
+     */
+    NDArray cumProd(int axis, DataType dataType);
+
+    /**
      * Returns the product of this {@code NDArray}.
      *
      * <p>Examples
@@ -2649,6 +2947,84 @@ public interface NDArray extends NDResource {
     NDArray mean(int[] axes, boolean keepDims);
 
     /**
+     * Performs Lp normalization of the array over specified dimension.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {1, 2, 3, 4, 5, 6}, new Shape(2, 3));
+     * jshell&gt; array;
+     * ND: (2, 2) cpu() float32
+     * [[1., 2., 3.],
+     *  [4., 5., 6.],
+     * ]
+     * jshell&gt; array.normalize();
+     * ND: (2, 3) cpu() float32
+     * [[0.2673, 0.5345, 0.8018],
+     *  [0.4558, 0.5698, 0.6838],
+     * ]
+     * </pre>
+     *
+     * @return the normalized {@code NDArray}
+     */
+    default NDArray normalize() {
+        return normalize(2, 1, 1e-12);
+    }
+
+    /**
+     * Performs Lp normalization of the array over specified dimension.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {1, 2, 3, 4, 5, 6}, new Shape(2, 3));
+     * jshell&gt; array;
+     * ND: (2, 2) cpu() float32
+     * [[1., 2., 3.],
+     *  [4., 5., 6.],
+     * ]
+     * jshell&gt; array.normalize(2, 1);
+     * ND: (2, 3) cpu() float32
+     * [[0.2673, 0.5345, 0.8018],
+     *  [0.4558, 0.5698, 0.6838],
+     * ]
+     * </pre>
+     *
+     * @param exponent the exponent value in the norm formulation
+     * @param dim the dimension to reduce
+     * @return the normalized {@code NDArray}
+     */
+    default NDArray normalize(double exponent, long dim) {
+        return normalize(exponent, dim, 1e-12);
+    }
+
+    /**
+     * Performs Lp normalization of the array over specified dimension.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {1, 2, 3, 4, 5, 6}, new Shape(2, 3));
+     * jshell&gt; array;
+     * ND: (2, 2) cpu() float32
+     * [[1., 2., 3.],
+     *  [4., 5., 6.],
+     * ]
+     * jshell&gt; array.normalize(2, 1, 1e-12);
+     * ND: (2, 3) cpu() float32
+     * [[0.2673, 0.5345, 0.8018],
+     *  [0.4558, 0.5698, 0.6838],
+     * ]
+     * </pre>
+     *
+     * @param exponent the exponent value in the norm formulation
+     * @param dim the dimension to reduce
+     * @param eps the small value to avoid division by zero
+     * @return the normalized {@code NDArray}
+     */
+    NDArray normalize(double exponent, long dim, double eps);
+
+    /**
      * Rotates an array by 90 degrees in the plane specified by axes.
      *
      * <p>Rotation direction is from the first towards the second axis.
@@ -2783,9 +3159,9 @@ public interface NDArray extends NDResource {
      */
     NDArray trace(int offset, int axis1, int axis2);
 
-    ////////////////////////////////////////
+    /*
     // Operations: Shapes and Arrays Manipulation
-    ////////////////////////////////////////
+    */
 
     /**
      * Splits this {@code NDArray} into multiple sub{@code NDArray}s given sections along first
@@ -2959,6 +3335,206 @@ public interface NDArray extends NDResource {
     NDArray flatten();
 
     /**
+     * Flattens this {@code NDArray} into a partially flatten {@code NDArray}.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[]{1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f}, new Shape(2, 2, 2));
+     * jshell&gt; array.flatten(0, 1);
+     * ND: (4) cpu() float32
+     * [[1., 2], [3., 4.], [5., 6.], [7., 8.]]
+     * </pre>
+     *
+     * @param startDim the first dim to flatten, inclusive
+     * @param endDim the last dim to flatten, inclusive
+     * @return a partially fallen {@code NDArray}
+     */
+    NDArray flatten(int startDim, int endDim);
+
+    /**
+     * Computes the one-dimensional discrete Fourier Transform.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @return The truncated or zero-padded input, transformed along the axis indicated by axis, or
+     *     the last one if axis is not specified.
+     */
+    default NDArray fft(long length) {
+        return fft(length, -1);
+    }
+
+    /**
+     * Computes the one-dimensional discrete Fourier Transform.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @param axis Axis over which to compute the FFT.
+     * @return The truncated or zero-padded input, transformed along the axis indicated by axis, or
+     *     the last one if axis is not specified.
+     */
+    NDArray fft(long length, long axis);
+
+    /**
+     * Computes the one dimensional inverse discrete Fourier transform.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @param axis Axis over which to compute the IFFT.
+     * @return The truncated or zero-padded input, transformed along the axis indicated by axis, or
+     *     the last one if axis is not specified.
+     */
+    NDArray ifft(long length, long axis);
+
+    /**
+     * Computes the one dimensional inverse discrete Fourier transform.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @return The truncated or zero-padded input, transformed along the axis indicated by axis, or
+     *     the last one if axis is not specified.
+     */
+    default NDArray ifft(long length) {
+        return ifft(length, -1);
+    }
+
+    /**
+     * Computes the one dimensional Fourier transform of real-valued input.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @return The truncated or zero-padded input, transformed along the axis indicated by axis, or
+     *     the last one if axis is not specified.
+     */
+    default NDArray rfft(long length) {
+        return rfft(length, -1);
+    }
+
+    /**
+     * Computes the one dimensional Fourier transform of real-valued input.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @param axis Axis over which to compute the FFT.
+     * @return The truncated or transformed along the axis indicated by axis, or the last one if
+     *     axis is not specified.
+     */
+    NDArray rfft(long length, long axis);
+
+    /**
+     * Computes the one dimensional inverse Fourier transform of real-valued input.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @param axis Axis over which to compute the IRFFT.
+     * @return The truncated or transformed along the axis indicated by axis, or the last one if
+     *     axis is not specified.
+     */
+    NDArray irfft(long length, long axis);
+
+    /**
+     * Computes the one dimensional inverse Fourier transform of real-valued input.
+     *
+     * @param length Length of the transformed axis of the output.
+     * @return The truncated or transformed along the axis indicated by axis, or the last one if
+     *     axis is not specified.
+     */
+    default NDArray irfft(long length) {
+        return irfft(length, -1);
+    }
+
+    /**
+     * Computes the Short Time Fourier Transform (STFT).
+     *
+     * @param nFft size of Fourier transform
+     * @param hopLength the distance between neighboring sliding window frames. Default can be:
+     *     floor(n_fft / 4)
+     * @param center whether to pad input on both sides.
+     * @param window Desired window to use. Recommend for HanningWindow
+     * @param returnComplex whether to return a complex tensor, or a real tensor with an extra last
+     *     dimension for the real and imaginary components.
+     * @return A NDArray containing the STFT result with shape described above
+     */
+    default NDArray stft(
+            long nFft, long hopLength, boolean center, NDArray window, boolean returnComplex) {
+        return stft(nFft, hopLength, center, window, false, returnComplex);
+    }
+
+    /**
+     * Computes the Short Time Fourier Transform (STFT).
+     *
+     * @param nFft size of Fourier transform
+     * @param hopLength the distance between neighboring sliding window frames. Default can be:
+     *     floor(n_fft / 4)
+     * @param center whether to pad input on both sides.
+     * @param window Desired window to use. Recommend for HanningWindow
+     * @param normalize controls whether to return the normalized STFT results
+     * @param returnComplex whether to return a complex tensor, or a real tensor with an extra last
+     *     dimension for the real and imaginary components.
+     * @return A NDArray containing the STFT result with shape described above
+     */
+    NDArray stft(
+            long nFft,
+            long hopLength,
+            boolean center,
+            NDArray window,
+            boolean normalize,
+            boolean returnComplex);
+
+    /**
+     * Computes the two-dimensional Discrete Fourier Transform.
+     *
+     * @param sizes Sizes of the transformed axes of the output. Will be zero-padded or trimmed to
+     *     this size.
+     * @param axes Axes over which to compute the 2D-FFT.
+     * @return The truncated or zero-padded input, transformed along the axes.
+     */
+    NDArray fft2(long[] sizes, long[] axes);
+
+    /**
+     * Computes the two-dimensional Discrete Fourier Transform along the last 2 axes.
+     *
+     * @param sizes Sizes of the transformed axes of the output. Will be zero-padded or trimmed to
+     *     this size.
+     * @return The truncated or zero-padded input, transformed along the last two axes
+     */
+    default NDArray fft2(long[] sizes) {
+        return fft2(sizes, new long[] {-2, -1});
+    }
+
+    /**
+     * Computes the two-dimensional inverse Discrete Fourier Transform.
+     *
+     * @param sizes Sizes of the transformed axes of the output. Will be zero-padded or trimmed to
+     *     this size.
+     * @param axes Axes over which to compute the 2D-Inverse-FFT.
+     * @return The truncated or zero-padded input, transformed along the axes.
+     */
+    NDArray ifft2(long[] sizes, long[] axes);
+
+    /**
+     * Computes the two-dimensional inverse Discrete Fourier Transform along the last 2 axes.
+     *
+     * @param sizes Sizes of the transformed axes of the output. Will be zero-padded or trimmed to
+     *     this size.
+     * @return The truncated or zero-padded input, transformed along the axes.
+     */
+    default NDArray ifft2(long[] sizes) {
+        return ifft2(sizes, new long[] {-2, -1});
+    }
+
+    /**
+     * Pads this {@code NDArray} with the given {@link Shape}.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * NDArray array = manager.zeros(3, 3, 4, 2);
+     * array.pad(new Shape(1, 1), 0); # pad last dim by 1 on each side
+     * array.getShape() => (3, 3, 4, 4)
+     * </pre>
+     *
+     * @param padding the padding shape, must be even
+     * @return a padded {@code NDArray}
+     * @throws IllegalArgumentException thrown if the given {@code padding} does not match the size
+     *     of the current shape
+     */
+    NDArray pad(Shape padding, double value);
+
+    /**
      * Reshapes this {@code NDArray} to the given {@link Shape}.
      *
      * <p>Examples
@@ -3127,6 +3703,89 @@ public interface NDArray extends NDResource {
     NDArray squeeze(int[] axes);
 
     /**
+     * Returns the unique elements of the input tensor.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {3f, 1f, 2f, 3f, 1f, 2f, 1f, 3f, 2f}, new Shape(3, 3));
+     * jshell&gt; array;
+     * ND: (3, 3) cpu() float32
+     * [[[3., 1., 2.],
+     *   [3., 1., 2.],
+     *   [1., 3., 2.],
+     *  ],
+     * ]
+     * jshell&gt; NDList output = array.unique(0, true, true, true);
+     * jshell&gt; output.get(0);
+     * jshell&gt; output.get(1);
+     * jshell&gt; output.get(2);
+     *
+     * ND: (2, 3) cpu() float32
+     * [[1., 3., 2.],
+     *  [3., 1., 2.],
+     * ]
+     *
+     * ND: (3) cpu() int64
+     * [ 1,  1,  0]
+     *
+     * ND: (2) cpu() int64
+     * [ 1,  2]
+     *
+     * </pre>
+     *
+     * @param dim the dimension to apply unique
+     * @param sorted whether to sort the unique elements in ascending order before returning as
+     *     output
+     * @param returnInverse return the indices which, fed into the output unique array as indices,
+     *     will recover the original array
+     * @param returnCounts return the counts for each unique element
+     * @return An {@code NDList} containing: output (Tensor): the output list of unique elements or
+     *     low-rank tensors. inverse_indices (Tensor): (optional) if return_inverse is True, there
+     *     will be an additional returned tensor (same shape as input) representing the indices for
+     *     where elements in the original input map to in the output; otherwise, this function will
+     *     only return a single tensor. counts (Tensor): (optional) if return_counts is True, there
+     *     will be an additional returned tensor (same shape as output or output.size(dim), if dim
+     *     was specified) representing the number of occurrences for each unique value or tensor.
+     */
+    NDList unique(Integer dim, boolean sorted, boolean returnInverse, boolean returnCounts);
+
+    /**
+     * Returns the unique elements of the input tensor. The output is flattened.
+     *
+     * @param sorted whether to sort the unique elements in ascending order before returning as
+     *     output
+     * @param returnInverse return the indices which, fed into the output unique array as indices,
+     *     will recover the original array
+     * @param returnCounts return the counts for each unique element
+     * @return An {@code NDList} containing: output (Tensor): the output list of unique elements or
+     *     low-rank tensors. inverse_indices (Tensor): (optional) if return_inverse is True, there
+     *     will be an additional returned tensor (same shape as input) representing the indices for
+     *     where elements in the original input map to in the output; otherwise, this function will
+     *     only return a single tensor. counts (Tensor): (optional) if return_counts is True, there
+     *     will be an additional returned tensor (same shape as output or output.size(dim), if dim
+     *     was specified) representing the number of occurrences for each unique value or tensor.
+     */
+    default NDList unique(boolean sorted, boolean returnInverse, boolean returnCounts) {
+        return unique(null, sorted, returnInverse, returnCounts);
+    }
+
+    /**
+     * Returns the unique elements of the input tensor. The output is flattened.
+     *
+     * @return An {@code NDList} containing: output (Tensor): the output list of unique elements or
+     *     low-rank tensors. inverse_indices (Tensor): (optional) if return_inverse is True, there
+     *     will be an additional returned tensor (same shape as input) representing the indices for
+     *     where elements in the original input map to in the output; otherwise, this function will
+     *     only return a single tensor. counts (Tensor): (optional) if return_counts is True, there
+     *     will be an additional returned tensor (same shape as output or output.size(dim), if dim
+     *     was specified) representing the number of occurrences for each unique value or tensor.
+     */
+    default NDList unique() {
+        return unique(null, true, false, false);
+    }
+
+    /**
      * Joins a {@code NDArray} along the first axis.
      *
      * <p>Examples
@@ -3224,9 +3883,9 @@ public interface NDArray extends NDResource {
         return getNDArrayInternal().concat(new NDList(array), axis);
     }
 
-    ////////////////////////////////////////
+    /*
     // Operations: Logical Op
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns the truth value of this {@code NDArray} AND the other {@code NDArray} element-wise.
@@ -3349,9 +4008,9 @@ public interface NDArray extends NDResource {
      */
     NDArray logicalNot();
 
-    ////////////////////////////////////////
+    /*
     // Operations: Other
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns the indices that would sort this {@code NDArray}.
@@ -3475,8 +4134,8 @@ public interface NDArray extends NDResource {
      * ]
      * jshell&gt; array.sort(0); // sort along the first axis
      * ND: (2, 2) cpu() float32
-     * [[1., 4.],
-     *  [1., 3.],
+     * [[1., 1.],
+     *  [3., 4.],
      * ]
      * </pre>
      *
@@ -3557,6 +4216,66 @@ public interface NDArray extends NDResource {
     NDArray cumSum(int axis);
 
     /**
+     * Return specified diagonals.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.arange(9.0f).reshape(3, 3);
+     * jshell&gt; array.diagonal();
+     * ND: (3) cpu() float32
+     * [0., 4., 8.]
+     * </pre>
+     *
+     * @return specified diagonals
+     */
+    NDArray diagonal();
+
+    /**
+     * Return specified diagonals.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.arange(9.0f).reshape(3, 3);
+     * jshell&gt; array.diagonal(1);
+     * ND: (2) cpu() float32
+     * [1., 5.]
+     * jshell&gt; array.diagonal(-1);
+     * ND: (2) cpu() float32
+     * [3., 7.]
+     * </pre>
+     *
+     * @param offset Offset of the diagonal from the main diagonal. Can be positive or negative.
+     * @return specified diagonals
+     */
+    NDArray diagonal(int offset);
+
+    /**
+     * Return specified diagonals.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.arange(27f).reshape(3, 3, 3);
+     * jshell&gt; array.diagonal(0, 1, 2);
+     * ND: (3, 3) cpu() float32
+     * [[ 0.,  4.,  8.],
+     * [ 9., 13., 17.],
+     * [18., 22., 26.],
+     * ]
+     * </pre>
+     *
+     * @param offset Offset of the diagonal from the main diagonal. Can be positive or negative.
+     * @param axis1 Axis to be used as the first axis of the 2-D sub-arrays from which the diagonals
+     *     should be taken.
+     * @param axis2 Axis to be used as the second axis of the 2-D sub-arrays from which the
+     *     diagonals should be taken.
+     * @return specified diagonals
+     */
+    NDArray diagonal(int offset, int axis1, int axis2);
+
+    /**
      * Replace the handle of the NDArray with the other. The NDArray used for replacement will be
      * killed.
      *
@@ -3574,6 +4293,13 @@ public interface NDArray extends NDResource {
      *     are infinite
      */
     NDArray isInfinite();
+
+    /**
+     * Computes the inverse of square {@code NDArray} if it exists.
+     *
+     * @return the inverse of square {@code NDArray}.
+     */
+    NDArray inverse();
 
     /**
      * Returns the boolean {@code NDArray} with value {@code true} where this {@code NDArray}'s
@@ -3699,7 +4425,8 @@ public interface NDArray extends NDResource {
      * jshell&gt; NDArray array = manager.create(new float[] {0f, 1f, 2f, 3f}, new Shape(2, 2));
      * jshell&gt; array.repeat(1, 2);
      * ND: (6) cpu() float32
-     * [0., 0., 1., 1., 2., 2.]
+     * [[0., 0., 1., 1.],
+     *  [2., 2., 3., 3.]]
      * </pre>
      *
      * @param axis the axis to repeat
@@ -3861,6 +4588,14 @@ public interface NDArray extends NDResource {
      * @return the result {@code NDArray}
      */
     NDArray matMul(NDArray other);
+
+    /**
+     * Batch product matrix of this {@code NDArray} and the other {@code NDArray}.
+     *
+     * @param other the other {@code NDArray} to perform matrix product with
+     * @return the result {@code NDArray}
+     */
+    NDArray batchMatMul(NDArray other);
 
     /**
      * Clips (limit) the values in this {@code NDArray}.
@@ -4097,6 +4832,28 @@ public interface NDArray extends NDResource {
      * @return a {@code NDArray} containing indices
      */
     NDArray argMax(int axis);
+
+    /**
+     * Returns (values, indices) of the top k values along given axis.
+     *
+     * @param k the number of returned values
+     * @param axis the axis to sort along, whose shape is reduced to k
+     * @return a {@code NDList} containing (values, indices)
+     */
+    default NDList topK(int k, int axis) {
+        return topK(k, axis, true, true);
+    }
+
+    /**
+     * Returns (values, indices) of the top k values along given axis.
+     *
+     * @param k the number of returned values
+     * @param axis the axis to sort along, whose shape is reduced to k
+     * @param largest whether the largest or the smallest
+     * @param sorted whether the sorted or not
+     * @return a {@code NDList} containing (values, indices)
+     */
+    NDList topK(int k, int axis, boolean largest, boolean sorted);
 
     /**
      * Returns the indices of the minimum values into the flattened {@code NDArray}.
@@ -4385,6 +5142,28 @@ public interface NDArray extends NDResource {
     NDArray erfinv();
 
     /**
+     * Returns element-wise gauss error function of the {@code NDArray}.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {0f, 0.4769f, Float.NEGATIVE_INFINITY});
+     * jshell&gt; array.erf();
+     * ND: (3) cpu() float32
+     * [0., 0.5, -1]
+     * </pre>
+     *
+     * @return The gauss error of the {@code NDArray}, element-wise
+     */
+    NDArray erf();
+
+    /** {@inheritDoc} */
+    @Override
+    default List<NDArray> getResourceNDArrays() {
+        return Collections.singletonList(this);
+    }
+
+    /**
      * Returns an internal representative of Native {@code NDArray}.
      *
      * <p>This method should only be used by Engine provider
@@ -4394,16 +5173,56 @@ public interface NDArray extends NDResource {
     NDArrayEx getNDArrayInternal();
 
     /**
+     * Returns {@code true} if this NDArray has been released.
+     *
+     * @return {@code true} if this NDArray has been released
+     */
+    boolean isReleased();
+
+    /**
+     * Runs the debug string representation of this {@code NDArray}.
+     *
+     * @return the debug string representation of this {@code NDArray}
+     */
+    default String toDebugString() {
+        if (isReleased()) {
+            return "This array is already closed";
+        }
+        if (getDataType() == DataType.STRING) {
+            return Arrays.toString(toStringArray(StandardCharsets.UTF_8));
+        }
+        return NDFormat.format(this, 100, 10, 10, 20);
+    }
+
+    /**
+     * Runs the debug string representation of this {@code NDArray}.
+     *
+     * @param withContent true to show the content of NDArray
+     * @return the debug string representation of this {@code NDArray}
+     */
+    default String toDebugString(boolean withContent) {
+        return toDebugString(1000, 10, 10, 20, withContent);
+    }
+
+    /**
      * Runs the debug string representation of this {@code NDArray}.
      *
      * @param maxSize the maximum elements to print out
      * @param maxDepth the maximum depth to print out
      * @param maxRows the maximum rows to print out
      * @param maxColumns the maximum columns to print out
+     * @param withContent true to show the content of NDArray
      * @return the debug string representation of this {@code NDArray}
      */
-    default String toDebugString(int maxSize, int maxDepth, int maxRows, int maxColumns) {
-        return NDFormat.format(this, maxSize, maxDepth, maxRows, maxColumns);
+    default String toDebugString(
+            int maxSize, int maxDepth, int maxRows, int maxColumns, boolean withContent) {
+        if (isReleased()) {
+            return "This array is already closed";
+        }
+        if (getDataType() == DataType.STRING) {
+            return Arrays.toString(toStringArray(StandardCharsets.UTF_8));
+        }
+        return NDFormat.format(this, maxSize, maxDepth, maxRows, maxColumns, withContent);
     }
 
     /** {@inheritDoc} */
@@ -4592,6 +5411,57 @@ public interface NDArray extends NDResource {
      * Returns a one-hot {@code NDArray}.
      *
      * <ul>
+     *   <li>The locations represented by indices take value 1, while all other locations take value
+     *       0.
+     *   <li>If the input {@code NDArray} is rank N, the output will have rank N+1. The new axis is
+     *       appended at the end.
+     *   <li>If {@code NDArray} is a scalar the output shape will be a vector of length depth.
+     *   <li>If {@code NDArray} is a vector of length features, the output shape will be features x
+     *       depth.
+     *   <li>If {@code NDArray} is a matrix with shape [batch, features], the output shape will be
+     *       batch x features x depth.
+     * </ul>
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new int[] {1, 0, 2, 0});
+     * jshell&gt; array.oneHot(3);
+     * ND: (4, 3) cpu() float32
+     * [[0., 1., 0.],
+     *  [1., 0., 0.],
+     *  [0., 0., 1.],
+     *  [1., 0., 0.],
+     * ]
+     * jshell&gt; NDArray array = manager.create(new int[][] {{1, 0}, {1, 0}, {2, 0}});
+     * jshell&gt; array.oneHot(3);
+     * ND: (3, 2, 3) cpu() float32
+     * [[[0., 1., 0.],
+     *   [1., 0., 0.],
+     *  ],
+     *  [[0., 1., 0.],
+     *   [1., 0., 0.],
+     *  ],
+     *  [[0., 0., 1.],
+     *   [1., 0., 0.],
+     *  ],
+     * ]
+     * </pre>
+     *
+     * @param depth Depth of the one hot dimension.
+     * @param dataType dataType of the output.
+     * @return one-hot encoding of this {@code NDArray}
+     * @see <a
+     *     href=https://d2l.djl.ai/chapter_linear-networks/softmax-regression.html#classification-problems>Classification-problems</a>
+     */
+    default NDArray oneHot(int depth, DataType dataType) {
+        return oneHot(depth, 1f, 0f, dataType);
+    }
+
+    /**
+     * Returns a one-hot {@code NDArray}.
+     *
+     * <ul>
      *   <li>The locations represented by indices take value onValue, while all other locations take
      *       value offValue.
      *   <li>If the input {@code NDArray} is rank N, the output will have rank N+1. The new axis is
@@ -4656,4 +5526,108 @@ public interface NDArray extends NDResource {
      * @return the result {@code NDArray}
      */
     NDArray batchDot(NDArray other);
+
+    /**
+     * Convert a general NDArray to its complex math format.
+     *
+     * <p>example: [10f, 12f] float32 -&gt; [10+12j] in complex64
+     *
+     * @return the complex NDArray
+     */
+    NDArray complex();
+
+    /**
+     * Convert a complex NDArray to its real math format. example: [10+12j] in complex64 -&gt; [10f,
+     * 12f] float32
+     *
+     * @return tje real NDArray
+     */
+    NDArray real();
+
+    /**
+     * Conjugate complex array.
+     *
+     * @return Returns a view of input with a flipped conjugate bit. If input has a non-complex
+     *     type, this function just returns input.
+     */
+    NDArray conj();
+
+    /**
+     * Calculates the n-th order discrete difference along a given dimension.
+     *
+     * @param n the number of times to apply the difference
+     * @param dim the dimension to perform the difference along
+     * @return a new {@link NDArray} containing the differenced values
+     */
+    NDArray diff(int n, int dim);
+
+    /**
+     * Rolls this {@code NDArray} by shifting elements, with the last shifted elements reintroduced
+     * at the start.
+     *
+     * <p>If no axis is given (see {@link NDArray#roll(long[], int[])}), this {@code NDArray} is
+     * flattened before rolling, then reshaped back to its original {@link Shape}.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.arange(8f);
+     * jshell&gt; array.roll(2);
+     * ND: (8) cpu() float32
+     * [6., 7., 0., 1., 2., 3., 4., 5.]
+     * </pre>
+     *
+     * @param shift the number of places by which elements are shifted. Negative shifts roll in the
+     *     opposite direction
+     * @return the result {@code NDArray} with the same {@link Shape} as this {@code NDArray}
+     * @see NDArray#roll(long[], int[])
+     */
+    default NDArray roll(long shift) {
+        return roll(new long[] {shift}, new int[0]);
+    }
+
+    /**
+     * Rolls this {@code NDArray} by shifting elements along a given axis, with the last shifted
+     * elements reintroduced at the start of that axis.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.arange(8f).reshape(2, 4);
+     * jshell&gt; array;
+     * ND: (2, 4) cpu() float32
+     * [[0., 1., 2., 3.],
+     *  [4., 5., 6., 7.],
+     * ]
+     * jshell&gt; array.roll(1, 0);
+     * ND: (2, 4) cpu() float32
+     * [[4., 5., 6., 7.],
+     *  [0., 1., 2., 3.],
+     * ]
+     * </pre>
+     *
+     * @param shift the number of places by which elements are shifted. Negative shifts roll in the
+     *     opposite direction
+     * @param axis the axis along which elements are shifted
+     * @return the result {@code NDArray} with the same {@link Shape} as this {@code NDArray}
+     * @see NDArray#roll(long[], int[])
+     */
+    default NDArray roll(long shift, int axis) {
+        return roll(new long[] {shift}, new int[] {axis});
+    }
+
+    /**
+     * Rolls this {@code NDArray} by shifting elements along given axes, with the last shifted
+     * elements reintroduced at the start of each axis.
+     *
+     * <p>{@code shifts} and {@code axes} are matched pairwise by position; if {@code axes} is
+     * empty, this {@code NDArray} is flattened before rolling, then reshaped back to its original
+     * {@link Shape}.
+     *
+     * @param shifts the number of places by which elements are shifted along each corresponding
+     *     axis. Negative shifts roll in the opposite direction
+     * @param axes the axes along which elements are shifted, matched pairwise with {@code shifts}
+     * @return the result {@code NDArray} with the same {@link Shape} as this {@code NDArray}
+     */
+    NDArray roll(long[] shifts, int[] axes);
 }

@@ -19,16 +19,20 @@ import ai.djl.ndarray.NDManager;
 import ai.djl.ndarray.types.DataType;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
-import ai.djl.nn.BlockFactory;
 import ai.djl.nn.SymbolBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.training.Trainer;
 import ai.djl.training.TrainingConfig;
 import ai.djl.translate.Translator;
-import ai.djl.util.ClassLoaderUtils;
 import ai.djl.util.Pair;
 import ai.djl.util.PairList;
 import ai.djl.util.Utils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.FileNotFoundException;
@@ -45,8 +49,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /** {@code BaseModel} is the basic implementation of {@link Model}. */
 public abstract class BaseModel implements Model {
@@ -59,6 +61,7 @@ public abstract class BaseModel implements Model {
     protected String modelName;
     protected NDManager manager;
     protected DataType dataType;
+    protected boolean wasLoaded;
     protected PairList<String, Shape> inputData;
     protected Map<String, Object> artifacts = new ConcurrentHashMap<>();
     protected Map<String, String> properties = new ConcurrentHashMap<>();
@@ -76,6 +79,7 @@ public abstract class BaseModel implements Model {
     /** {@inheritDoc} */
     @Override
     public void setBlock(Block block) {
+        wasLoaded = false;
         this.block = block;
     }
 
@@ -99,8 +103,8 @@ public abstract class BaseModel implements Model {
 
     /** {@inheritDoc} */
     @Override
-    public <I, O> Predictor<I, O> newPredictor(Translator<I, O> translator) {
-        return new Predictor<>(this, translator, false);
+    public <I, O> Predictor<I, O> newPredictor(Translator<I, O> translator, Device device) {
+        return new Predictor<>(this, translator, device, false);
     }
 
     /** {@inheritDoc} */
@@ -113,6 +117,13 @@ public abstract class BaseModel implements Model {
     @Override
     public DataType getDataType() {
         return dataType;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void load(InputStream is, Map<String, ?> options)
+            throws IOException, MalformedModelException {
+        throw new UnsupportedOperationException("Not supported!");
     }
 
     /** {@inheritDoc} */
@@ -175,7 +186,7 @@ public abstract class BaseModel implements Model {
         } catch (RuntimeException e) {
             Throwable t = e.getCause();
             if (t instanceof IOException) {
-                throw (IOException) e.getCause();
+                throw (IOException) e.getCause(); // NOPMD
             }
             throw e;
         }
@@ -187,7 +198,7 @@ public abstract class BaseModel implements Model {
         if (artifactName == null) {
             throw new IllegalArgumentException("artifactName cannot be null");
         }
-        Path file = modelDir.resolve(artifactName);
+        Path file = Utils.resolveModelFile(modelDir, artifactName);
         if (Files.exists(file) && Files.isReadable(file)) {
             return file.toUri().toURL();
         }
@@ -198,7 +209,7 @@ public abstract class BaseModel implements Model {
     @Override
     public InputStream getArtifactAsStream(String name) throws IOException {
         URL url = getArtifact(name);
-        return url.openStream();
+        return new BufferedInputStream(url.openStream());
     }
 
     /** {@inheritDoc} */
@@ -213,21 +224,44 @@ public abstract class BaseModel implements Model {
         return properties.get(key);
     }
 
-    protected void setModelDir(Path modelDir) {
-        this.modelDir = modelDir.toAbsolutePath();
+    /** {@inheritDoc} */
+    @Override
+    public Map<String, String> getProperties() {
+        return properties;
     }
 
-    protected Block loadFromBlockFactory() {
-        BlockFactory factory = ClassLoaderUtils.findImplementation(modelDir, null);
-        if (factory == null) {
-            return null;
+    protected void setModelDir(Path modelDir) {
+        this.modelDir = Utils.getNestedModelDir(modelDir);
+    }
+
+    protected void loadBlock(String prefix, Map<String, ?> options)
+            throws IOException, MalformedModelException {
+        boolean hasParameter = true;
+        if (options != null) {
+            String paramOption = (String) options.get("hasParameter");
+            if (paramOption != null) {
+                hasParameter = Boolean.parseBoolean(paramOption);
+            }
         }
-        return factory.newBlock(manager);
+        if (hasParameter) {
+            Path paramFile = paramPathResolver(prefix, options);
+            if (paramFile == null) {
+                throw new IOException(
+                        "Parameter file not found in: "
+                                + modelDir
+                                + ". If you only specified model path, make sure path name"
+                                + " match your saved model file name.");
+            }
+            readParameters(paramFile, options);
+        }
     }
 
     /** {@inheritDoc} */
     @Override
     public void save(Path modelPath, String newModelName) throws IOException {
+        if (newModelName == null || newModelName.isEmpty()) {
+            newModelName = modelName;
+        }
         if (Files.notExists(modelPath)) {
             Files.createDirectories(modelPath);
         }
@@ -242,9 +276,10 @@ public abstract class BaseModel implements Model {
                         ? Utils.getCurrentEpoch(modelPath, newModelName) + 1
                         : Integer.parseInt(epochValue);
 
-        String fileName = String.format(Locale.ENGLISH, "%s-%04d.params", newModelName, epoch);
+        String fileName = String.format(Locale.ROOT, "%s-%04d.params", newModelName, epoch);
         Path paramFile = modelPath.resolve(fileName);
-        try (DataOutputStream dos = new DataOutputStream(Files.newOutputStream(paramFile))) {
+        try (DataOutputStream dos =
+                new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(paramFile)))) {
             dos.writeBytes("DJL@");
             dos.writeInt(MODEL_VERSION);
             dos.writeUTF(newModelName);
@@ -320,13 +355,18 @@ public abstract class BaseModel implements Model {
             epoch = Integer.parseInt(epochOption.toString());
         }
 
-        return modelDir.resolve(String.format(Locale.ENGLISH, "%s-%04d.params", prefix, epoch));
+        return modelDir.resolve(String.format(Locale.ROOT, "%s-%04d.params", prefix, epoch));
     }
 
     protected boolean readParameters(Path paramFile, Map<String, ?> options)
             throws IOException, MalformedModelException {
         logger.debug("Try to load model from {}", paramFile);
-        try (DataInputStream dis = new DataInputStream(Files.newInputStream(paramFile))) {
+        return readParameters(Files.newInputStream(paramFile), options);
+    }
+
+    protected boolean readParameters(InputStream paramStream, Map<String, ?> options)
+            throws IOException, MalformedModelException {
+        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(paramStream))) {
             byte[] buf = new byte[4];
             dis.readFully(buf);
             if (!"DJL@".equals(new String(buf, StandardCharsets.US_ASCII))) {

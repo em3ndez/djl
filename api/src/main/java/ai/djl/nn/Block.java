@@ -22,9 +22,12 @@ import ai.djl.nn.convolutional.Conv2d;
 import ai.djl.training.ParameterStore;
 import ai.djl.training.initializer.Initializer;
 import ai.djl.util.PairList;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.Map;
 import java.util.function.Predicate;
 
 /**
@@ -60,7 +63,7 @@ import java.util.function.Predicate;
  * <p>We provide helpers for creating two common structures of blocks. For blocks that call children
  * in a chain, use {@link SequentialBlock}. If a blocks calls all of the children in parallel and
  * then combines their results, use {@link ParallelBlock}. For blocks that do not fit these
- * strcutures, you should directly extend the {@link AbstractBlock} class.
+ * structures, you should directly extend the {@link AbstractBlock} class.
  *
  * <p>A block does not necessarily have to have children and parameters. For example, {@link
  * SequentialBlock}, and {@link ParallelBlock} don't have any parameters, but do have child blocks.
@@ -94,13 +97,17 @@ import java.util.function.Predicate;
  * ai.djl.ndarray.NDArray} that are initialized according to the {@link Initializer} set. At this
  * stage, the block is expecting a specific type of input, and is ready to be trained.
  *
- * <p>Training is when we starting feeding the training data as input to the block, get the output,
- * and try to update parameters to learn. For more information about training, please refer the
- * javadoc at {@link ai.djl.training.Trainer}. At the end of training, a block represents a
+ * <p>Training is when we are starting feeding the training data as input to the block, get the
+ * output, and try to update parameters to learn. For more information about training, please refer
+ * the javadoc at {@link ai.djl.training.Trainer}. At the end of training, a block represents a
  * fully-trained model.
  *
+ * <p>It is also possible to freeze parameters and blocks to avoid them being trained. When loading
+ * models or building blocks with preTrained data, they default to being frozen. If you wish to
+ * further refine these elements, use {@link Block#freezeParameters(boolean)} to unfreeze them.
+ *
  * @see <a
- *     href="https://github.com/deepjavalibrary/djl/blob/master/jupyter/tutorial/01_create_your_first_network.ipynb">this
+ *     href="https://docs.djl.ai/master/docs/demos/jupyter/tutorial/01_create_your_first_network.html">this
  *     tutorial on creating your first network</a>
  * @see <a href="https://d2l.djl.ai/chapter_deep-learning-computation/model-construction.html">The
  *     D2L chapter on blocks</a> and <a
@@ -115,7 +122,7 @@ public interface Block {
      *
      * @param parameterStore the parameter store
      * @param inputs the input NDList
-     * @param training true for a training forward pass
+     * @param training true for a training forward pass (turn on dropout and layerNorm)
      * @return the output of the forward pass
      */
     default NDList forward(ParameterStore parameterStore, NDList inputs, boolean training) {
@@ -128,7 +135,7 @@ public interface Block {
      *
      * @param parameterStore the parameter store
      * @param inputs the input NDList
-     * @param training true for a training forward pass
+     * @param training true for a training forward pass (turn on dropout and layerNorm)
      * @param params optional parameters
      * @return the output of the forward pass
      */
@@ -184,7 +191,8 @@ public interface Block {
     void setInitializer(Initializer initializer, Predicate<Parameter> predicate);
 
     /**
-     * Initializes the parameters of the block. This method must be called before calling `forward`.
+     * Initializes the parameters of the block, set require gradient if required and infer the block
+     * inputShape. This method must be called before calling `forward`.
      *
      * @param manager the NDManager to initialize the parameters
      * @param dataType the datatype of the parameters
@@ -193,7 +201,8 @@ public interface Block {
     void initialize(NDManager manager, DataType dataType, Shape... inputShapes);
 
     /**
-     * Returns a boolean whether the block is initialized.
+     * Returns a boolean whether the block is initialized (block has inputShape and params have
+     * nonNull array).
      *
      * @return whether the block is initialized
      */
@@ -250,6 +259,32 @@ public interface Block {
     Shape[] getOutputShapes(Shape[] inputShapes);
 
     /**
+     * Returns the expected output shapes of the block for the specified input shapes.
+     *
+     * @param inputShapes the shapes of the inputs
+     * @param inputDataTypes the datatypes of the inputs
+     * @return the expected output shapes of the block
+     */
+    default Shape[] getOutputShapes(Shape[] inputShapes, DataType[] inputDataTypes) {
+        return getOutputShapes(inputShapes);
+    }
+
+    /**
+     * Returns the input shapes of the block. The input shapes are only available after the block is
+     * initialized, otherwise an {@link IllegalStateException} is thrown.
+     *
+     * @return the input shapes of the block
+     */
+    Shape[] getInputShapes();
+
+    /**
+     * Returns the input dataTypes of the block.
+     *
+     * @return the input dataTypes of the block
+     */
+    DataType[] getOutputDataTypes();
+
+    /**
      * Writes the parameters of the block to the given outputStream.
      *
      * @param os the outputstream to save the parameters to
@@ -267,6 +302,33 @@ public interface Block {
      */
     void loadParameters(NDManager manager, DataInputStream is)
             throws IOException, MalformedModelException;
+
+    /**
+     * Freezes or unfreezes all parameters inside the block for training.
+     *
+     * @param freeze true if the parameter should be frozen
+     * @see Parameter#freeze(boolean)
+     */
+    default void freezeParameters(boolean freeze) {
+        for (Parameter parameter : getParameters().values()) {
+            parameter.freeze(freeze);
+        }
+    }
+
+    /**
+     * Freezes or unfreezes all parameters inside the block that pass the predicate.
+     *
+     * @param freeze true to mark as frozen rather than unfrozen
+     * @param pred true tests if the parameter should be updated
+     * @see Parameter#freeze(boolean)
+     */
+    default void freezeParameters(boolean freeze, Predicate<Parameter> pred) {
+        for (Parameter parameter : getParameters().values()) {
+            if (pred.test(parameter)) {
+                parameter.freeze(freeze);
+            }
+        }
+    }
 
     /**
      * Validates that actual layout matches the expected layout.
@@ -292,5 +354,14 @@ public interface Block {
                                 + LayoutType.toString(actualLayout));
             }
         }
+    }
+
+    /**
+     * Returns a map of all the custom metadata of the block.
+     *
+     * @return the map of {@link PairList}
+     */
+    default Map<String, String> getCustomMetadata() {
+        return Collections.emptyMap();
     }
 }

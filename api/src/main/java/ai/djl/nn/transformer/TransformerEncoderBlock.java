@@ -22,24 +22,28 @@ import ai.djl.nn.norm.BatchNorm;
 import ai.djl.nn.norm.Dropout;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.util.Collections;
 import java.util.function.Function;
 
 /** Self-Attention based transformer encoder block. */
 public class TransformerEncoderBlock extends AbstractBlock {
 
-    private static final byte VERSION = 1;
-
     /** The attention mechanism. */
     private ScaledDotProductAttentionBlock selfAttentionBlock;
+
     /** Dropout before residual & layer normalization. */
     private Dropout selfAttentionDropout;
+
     /** Normalization of attention output and residual. */
     private BatchNorm attentionNorm;
+
     /** Fully connected pointwise block for output projection. */
     private PointwiseFeedForwardBlock pointWisefullyConnected;
+
     /** Dropout after fully connected and before last residual & layer normalization. */
     private Dropout fullyConnectedDropout;
+
     /** Another normalization for the output and residual. */
     private BatchNorm outputNorm;
 
@@ -52,13 +56,13 @@ public class TransformerEncoderBlock extends AbstractBlock {
      * @param dropoutProbability dropout probability
      * @param activationFunction activation function
      */
+    @SuppressWarnings("this-escape")
     public TransformerEncoderBlock(
             int embeddingSize,
             int headCount,
             int hiddenSize,
             float dropoutProbability,
             Function<NDList, NDList> activationFunction) {
-        super(VERSION);
         this.selfAttentionBlock =
                 addChildBlock(
                         "selfAttention",

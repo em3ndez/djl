@@ -29,32 +29,65 @@ interface. See: [MyTranslator](https://github.com/deepjavalibrary/djl/blob/maste
 DJL will look into `libs` folder to search for Translator implementation.
 
 ### Step 3: Copy Translator into `libs` folder
-DJL can loading Translator from the following source:
+DJL can load Translator from the following source:
 
 - from jar files directly locate in `libs` folder
 - from compiled java .class file in `libs/classes` folder
-- DJL can compile .java files in `libs/classes` folder at runtime and load compiled class
+- DJL can compile .java files in `libs/classes` folder at runtime and load compiled class.
+
+Loading a Translator that is bundled with the model is **opt-in**, whether it ships as a `.jar`, as a
+`.class`, or as `.java` sources compiled at load time. Set `DJL_LOAD_BUNDLED_CLASSES=true` or
+`-Dai.djl.load_bundled_classes=true` when loading models from a trusted source. Without it, DJL
+ignores the bundled content and logs a message naming the flag.
+
+Compiling bundled `.java` sources is a **separate** opt-in: set `DJL_COMPILE_JAVA=true` or
+`-Dai.djl.compile_java=true`. Compiled output is still bundled content, so a model that ships
+sources needs **both** flags; a model that ships a precompiled `.class` or `.jar` needs only
+`DJL_LOAD_BUNDLED_CLASSES`.
+
+The alternative that needs no flag is to install the Translator on the application classpath and
+name it explicitly with the `translator` property in `serving.properties`. This is the recommended
+option, because a `className` is still resolved against the application classpath while bundled
+loading is disabled.
+
+When no `translator` property is set, DJL has to read the bundled content to discover the class name.
+With bundled loading disabled there is nothing to discover, so loading a model that bundles a
+Translator fails with a message naming the flag. DJL does not fall back to a default Translator in
+that case, because a model served with a substituted Translator applies different pre- and
+post-processing while otherwise looking like a correct load. A model that bundles nothing is
+unaffected and still falls back to the default Translator for its `application`.
 
 ## Configure data processing based on standard Translator
 DJL provides several built-in Translator for well-know ML applications, such as `Image Classification`
 and `Object Detection`. You can customize those built-in Translators' behavior by providing
 configuration parameters.
 
-There are two ways to supply configurations to the default Translator:
+There are two ways to supply configurations to the `Translator`:
 
 - Add a `serving.properties` file in the model's folder
 
     Here is an example:
 
-```
-# specify model's application
-application=cv/image_classification
+```config
+# serving.properties can be used to define model's metadata, all the arguments will be
+# passed to TranslatorFactory to create proper Translator
+
+# defines model's application
+application=nlp/question_answer
+
+# defines the model's engine, can be overrid by Criteria.optEngine()
+engine=PyTorch
+
+# defines TranslatorFactory, can be overrid by Criteria.optTranslator() or Criteria.optTranslatorFactory()
+translatorFactory=ai.djl.modality.cv.translator.ImageClassificationTranslatorFactory
+
+# Add Translator specific arguments here to customize pre-processing and post-processing
 # specify image size to be cropped
 width=224
 height=224
-# spcifiy the input image should be treated as grayscale image
+# specify the input image should be treated as grayscale image
 flag=GRAYSCALE
-# spcficy if apply softmax for post processing
+# specify if apply softmax for post-processing
 softmax=true
 ```
 
@@ -62,7 +95,7 @@ softmax=true
 
     You can customize Translator's behavior with Criteria, for example:
 
-```
+```java
 Criteria<Image, Classifications> criteria = Criteria.builder()
         .setTypes(Image.class, Classifications.class) // defines input and output data type
         .optApplication(Application.CV.IMAGE_CLASSIFICATION) // spcific model's application
@@ -74,3 +107,15 @@ Criteria<Image, Classifications> criteria = Criteria.builder()
         .optArgument("softmax", true)
         .build();
 ```
+
+Arguments that name a file, such as `synsetFileName`, `tokenizerPath` or `dense`, are resolved in the
+model directory. Naming a file outside the model directory is **opt-in**: set
+`DJL_ALLOW_FILES_OUTSIDE_MODEL_DIR=true` or `-Dai.djl.allow_files_outside_model_dir=true`.
+`synsetUrl` accepts `http` and `https` URLs and is fetched like other remote resources: hosts that
+resolve to private, loopback or link-local addresses are refused, and nothing is fetched in offline
+mode. For a synset file stored with the model, use `synsetFileName` instead. To restore the previous
+behavior (other schemes and private hosts), set `DJL_ALLOW_INSECURE_URL=true` or
+`-Dai.djl.allow_insecure_url=true`; this does not apply in offline mode.
+
+`encoder` (SAM2) and `clipModelPath` (YOLO-World) are no longer looked up in the current working
+directory first.

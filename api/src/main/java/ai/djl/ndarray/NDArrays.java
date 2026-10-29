@@ -14,6 +14,7 @@ package ai.djl.ndarray;
 
 import ai.djl.ndarray.types.Shape;
 import ai.djl.util.Preconditions;
+
 import java.util.Arrays;
 
 /** This class contains various methods for manipulating NDArrays. */
@@ -31,9 +32,9 @@ public final class NDArrays {
         }
     }
 
-    ////////////////////////////////////////
+    /*
     // Operations: Element Comparison
-    ////////////////////////////////////////
+    */
 
     /**
      * Returns {@code true} if all elements in {@link NDArray} a are equal to {@link NDArray} b.
@@ -198,7 +199,7 @@ public final class NDArrays {
      * @return the boolean {@link NDArray} for element-wise "Equals" comparison
      */
     public static NDArray eq(Number n, NDArray a) {
-        return a.eq(n);
+        return eq(a, n);
     }
 
     /**
@@ -263,7 +264,7 @@ public final class NDArrays {
      * @return the boolean {@link NDArray} for element-wise "Not equals" comparison
      */
     public static NDArray neq(Number n, NDArray a) {
-        return a.neq(n);
+        return neq(a, n);
     }
 
     /**
@@ -787,9 +788,9 @@ public final class NDArrays {
         return data.sequenceMask(sequenceLength);
     }
 
-    ////////////////////////////////////////
+    /*
     // Operations: Element Arithmetic
-    ////////////////////////////////////////
+    */
 
     /**
      * Adds a number to the {@link NDArray} element-wise.
@@ -1259,7 +1260,7 @@ public final class NDArrays {
      */
     public static NDArray addi(NDArray... arrays) {
         checkInputs(arrays);
-        Arrays.stream(arrays).skip(1).forEachOrdered(array -> arrays[0].addi(array));
+        Arrays.stream(arrays).skip(1).forEachOrdered(arrays[0]::addi);
         return arrays[0];
     }
 
@@ -1411,7 +1412,7 @@ public final class NDArrays {
      */
     public static NDArray muli(NDArray... arrays) {
         checkInputs(arrays);
-        Arrays.stream(arrays).skip(1).forEachOrdered(array -> arrays[0].muli(array));
+        Arrays.stream(arrays).skip(1).forEachOrdered(arrays[0]::muli);
         return arrays[0];
     }
 
@@ -1819,7 +1820,7 @@ public final class NDArrays {
      *     the the {@link NDArray}
      */
     public static NDArray stack(NDList arrays, int axis) {
-        Preconditions.checkArgument(arrays.size() > 0, "need at least one array to stack");
+        Preconditions.checkArgument(!arrays.isEmpty(), "need at least one array to stack");
         NDArray array = arrays.head();
         return array.getNDArrayInternal().stack(arrays.subNDList(1), axis);
     }
@@ -1873,7 +1874,7 @@ public final class NDArrays {
      * @return the concatenated {@link NDArray}
      */
     public static NDArray concat(NDList arrays, int axis) {
-        Preconditions.checkArgument(arrays.size() > 0, "need at least one array to concatenate");
+        Preconditions.checkArgument(!arrays.isEmpty(), "need at least one array to concatenate");
         if (arrays.size() == 1) {
             return arrays.singletonOrThrow().duplicate();
         }
@@ -1994,5 +1995,24 @@ public final class NDArrays {
      */
     public static NDArray erfinv(NDArray input) {
         return input.erfinv();
+    }
+
+    /**
+     * Returns element-wise gauss error function of the {@code NDArray}.
+     *
+     * <p>Examples
+     *
+     * <pre>
+     * jshell&gt; NDArray array = manager.create(new float[] {0f, 0.4769f, Float.NEGATIVE_INFINITY});
+     * jshell&gt; array.erf();
+     * ND: (3) cpu() float32
+     * [0., 0.5, -1]
+     * </pre>
+     *
+     * @param input The input {@code NDArray}
+     * @return The gauss error of the {@code NDArray}, element-wise
+     */
+    public static NDArray erf(NDArray input) {
+        return input.erf();
     }
 }

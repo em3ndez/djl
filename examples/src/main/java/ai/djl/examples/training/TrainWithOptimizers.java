@@ -12,11 +12,9 @@
  */
 package ai.djl.examples.training;
 
-import ai.djl.Device;
-import ai.djl.MalformedModelException;
 import ai.djl.Model;
+import ai.djl.ModelException;
 import ai.djl.basicdataset.cv.classification.Cifar10;
-import ai.djl.basicmodelzoo.BasicModelZoo;
 import ai.djl.basicmodelzoo.cv.classification.ResNetV1;
 import ai.djl.examples.training.util.Arguments;
 import ai.djl.metric.Metrics;
@@ -26,13 +24,7 @@ import ai.djl.modality.cv.transform.Normalize;
 import ai.djl.modality.cv.transform.ToTensor;
 import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.Block;
-import ai.djl.nn.Blocks;
-import ai.djl.nn.SequentialBlock;
-import ai.djl.nn.SymbolBlock;
-import ai.djl.nn.core.Linear;
 import ai.djl.repository.zoo.Criteria;
-import ai.djl.repository.zoo.ModelNotFoundException;
-import ai.djl.repository.zoo.ModelZoo;
 import ai.djl.training.DefaultTrainingConfig;
 import ai.djl.training.EasyTrain;
 import ai.djl.training.Trainer;
@@ -48,13 +40,14 @@ import ai.djl.training.tracker.Tracker;
 import ai.djl.training.util.ProgressBar;
 import ai.djl.translate.Pipeline;
 import ai.djl.translate.TranslateException;
-import java.io.IOException;
-import java.util.Arrays;
-import java.util.Map;
+
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
+
+import java.io.IOException;
+import java.util.Arrays;
 
 /** This example features sample usage of a variety of optimizers to train Cifar10. */
 public final class TrainWithOptimizers {
@@ -62,14 +55,12 @@ public final class TrainWithOptimizers {
     private TrainWithOptimizers() {}
 
     public static void main(String[] args)
-            throws IOException, ParseException, ModelNotFoundException, MalformedModelException,
-                    TranslateException {
+            throws IOException, ParseException, ModelException, TranslateException {
         TrainWithOptimizers.runExample(args);
     }
 
     public static TrainingResult runExample(String[] args)
-            throws IOException, ParseException, ModelNotFoundException, MalformedModelException,
-                    TranslateException {
+            throws IOException, ParseException, ModelException, TranslateException {
         OptimizerArguments arguments =
                 (OptimizerArguments) new OptimizerArguments().parseArgs(args);
 
@@ -99,56 +90,21 @@ public final class TrainWithOptimizers {
         }
     }
 
-    private static Model getModel(Arguments arguments)
-            throws IOException, ModelNotFoundException, MalformedModelException {
-        boolean isSymbolic = arguments.isSymbolic();
+    private static Model getModel(Arguments arguments) throws IOException, ModelException {
         boolean preTrained = arguments.isPreTrained();
-        Map<String, String> options = arguments.getCriteria();
         Criteria.Builder<Image, Classifications> builder =
                 Criteria.builder()
                         .setTypes(Image.class, Classifications.class)
-                        .optProgress(new ProgressBar())
-                        .optArtifactId("resnet");
-        if (isSymbolic) {
-            // currently only MxEngine support removeLastBlock
-            builder.optGroupId("ai.djl.mxnet");
-            if (options == null) {
-                builder.optFilter("layers", "50");
-                builder.optFilter("flavor", "v1");
-            } else {
-                builder.optFilters(options);
-            }
-
-            Model model = ModelZoo.loadModel(builder.build());
-            SequentialBlock newBlock = new SequentialBlock();
-            SymbolBlock block = (SymbolBlock) model.getBlock();
-            block.removeLastBlock();
-            newBlock.add(block);
-            // the original model don't include the flatten
-            // so apply the flatten here
-            newBlock.add(Blocks.batchFlattenBlock());
-            newBlock.add(Linear.builder().setUnits(10).build());
-            model.setBlock(newBlock);
-            if (!preTrained) {
-                model.getBlock().clear();
-            }
-            return model;
-        }
+                        .optEngine(arguments.getEngine())
+                        .optProgress(new ProgressBar());
         // imperative resnet50
         if (preTrained) {
-            builder.optGroupId(BasicModelZoo.GROUP_ID);
-            if (options == null) {
-                builder.optFilter("layers", "50");
-                builder.optFilter("flavor", "v1");
-                builder.optFilter("dataset", "cifar10");
-            } else {
-                builder.optFilters(options);
-            }
+            builder.optModelUrls("djl://ai.djl.zoo/resnet/0.0.2/resnetv1");
             // load pre-trained imperative ResNet50 from DJL model zoo
-            return ModelZoo.loadModel(builder.build());
+            return builder.build().loadModel();
         } else {
             // construct new ResNet50 without pre-trained weights
-            Model model = Model.newInstance("resnetv1");
+            Model model = Model.newInstance("resnetv1", arguments.getEngine());
             Block resNet50 =
                     ResNetV1.builder()
                             .setImageShape(new Shape(3, Cifar10.IMAGE_HEIGHT, Cifar10.IMAGE_WIDTH))
@@ -175,7 +131,7 @@ public final class TrainWithOptimizers {
         return new DefaultTrainingConfig(Loss.softmaxCrossEntropyLoss())
                 .addEvaluator(new Accuracy())
                 .optOptimizer(setupOptimizer(arguments))
-                .optDevices(Device.getDevices(arguments.getMaxGpus()))
+                .optDevices(arguments.getMaxGpus())
                 .addTrainingListeners(TrainingListener.Defaults.logging(outputDir))
                 .addTrainingListeners(listener);
     }

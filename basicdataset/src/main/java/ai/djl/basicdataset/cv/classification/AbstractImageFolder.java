@@ -14,11 +14,16 @@ package ai.djl.basicdataset.cv.classification;
 
 import ai.djl.modality.cv.Image;
 import ai.djl.modality.cv.ImageFactory;
+import ai.djl.repository.MRL;
 import ai.djl.repository.Repository;
-import ai.djl.repository.Resource;
+import ai.djl.repository.zoo.DefaultModelZoo;
 import ai.djl.translate.TranslateException;
 import ai.djl.util.Pair;
 import ai.djl.util.PairList;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -30,10 +35,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-/** A dataset for loading image files stored in a folder structure. */
+/**
+ * A dataset for loading image files stored in a folder structure.
+ *
+ * <p>Usually, you want to use {@link ImageFolder} instead.
+ */
 public abstract class AbstractImageFolder extends ImageClassificationDataset {
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractImageFolder.class);
@@ -43,7 +50,7 @@ public abstract class AbstractImageFolder extends ImageClassificationDataset {
 
     protected List<String> synset;
     protected PairList<String, Integer> items;
-    protected Resource resource;
+    protected MRL mrl;
     protected boolean prepared;
 
     private int maxDepth;
@@ -57,7 +64,8 @@ public abstract class AbstractImageFolder extends ImageClassificationDataset {
         this.imageHeight = builder.imageHeight;
         this.synset = new ArrayList<>();
         this.items = new PairList<>();
-        this.resource = new Resource(builder.repository, null, "1.0");
+        String path = builder.repository.getBaseUri().toString();
+        mrl = MRL.undefined(builder.repository, DefaultModelZoo.GROUP_ID, path);
     }
 
     /** {@inheritDoc} */
@@ -120,7 +128,7 @@ public abstract class AbstractImageFolder extends ImageClassificationDataset {
 
     protected abstract Path getImagePath(String key);
 
-    private boolean isImage(File file) {
+    protected boolean isImage(File file) {
         String path = file.getName();
         if (!file.isFile() || file.isHidden() || path.startsWith(".")) {
             return false;
@@ -142,7 +150,7 @@ public abstract class AbstractImageFolder extends ImageClassificationDataset {
     /** {@inheritDoc} */
     @Override
     public Optional<Integer> getImageHeight() {
-        return Optional.ofNullable(imageWidth);
+        return Optional.ofNullable(imageHeight);
     }
 
     /** {@inheritDoc} */

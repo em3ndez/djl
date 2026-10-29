@@ -20,6 +20,7 @@ import ai.djl.ndarray.types.Shape;
 import ai.djl.nn.AbstractBlock;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,7 +30,7 @@ import java.util.List;
  * embeddings available, or when the pre-trained embedding needs to be further trained.
  */
 public class TrainableTextEmbedding extends AbstractBlock implements TextEmbedding {
-    private static final byte VERSION = 1;
+
     private TrainableWordEmbedding trainableWordEmbedding;
 
     /**
@@ -37,8 +38,8 @@ public class TrainableTextEmbedding extends AbstractBlock implements TextEmbeddi
      *
      * @param wordEmbedding the word embedding to embed each word
      */
+    @SuppressWarnings("this-escape")
     public TrainableTextEmbedding(TrainableWordEmbedding wordEmbedding) {
-        super(VERSION);
         this.trainableWordEmbedding = addChildBlock("trainableWordEmbedding", wordEmbedding);
     }
 

@@ -21,12 +21,11 @@ import ai.djl.nn.AbstractBlock;
 import ai.djl.nn.Activation;
 import ai.djl.training.ParameterStore;
 import ai.djl.util.PairList;
+
 import java.util.Arrays;
 
 /** Creates a block that performs all bert pretraining tasks (next sentence and masked language). */
 public class BertPretrainingBlock extends AbstractBlock {
-
-    private static final byte VERSION = 1;
 
     private BertBlock bertBlock;
     private BertMaskedLanguageModelBlock mlBlock;
@@ -37,8 +36,8 @@ public class BertPretrainingBlock extends AbstractBlock {
      *
      * @param builder a builder with a bert configuration
      */
+    @SuppressWarnings("this-escape")
     public BertPretrainingBlock(final BertBlock.Builder builder) {
-        super(VERSION);
         this.bertBlock = addChildBlock("Bert", builder.build());
         this.mlBlock =
                 addChildBlock(
@@ -70,7 +69,7 @@ public class BertPretrainingBlock extends AbstractBlock {
         NDArray typeIds = inputs.get(1);
         NDArray sequenceMasks = inputs.get(2);
         NDArray maskedIndices = inputs.get(3);
-        try (NDManager scope = NDManager.from(tokenIds)) {
+        try (NDManager scope = NDManager.subManagerOf(tokenIds)) {
             scope.tempAttachAll(inputs);
             // run the core bert model
             NDList bertResult =
